@@ -18,18 +18,23 @@ jobs:
         run: |
           rm -rf extracted
           mkdir extracted
+
           unzip -q "AI-Trading-Dashboard.zip" -d extracted
 
           ROOT=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
 
           if [ -n "$ROOT" ]; then
+            rm -rf "$ROOT/.git"
             cp -a "$ROOT"/. ./
           else
             cp -a extracted/. ./
           fi
 
           rm -rf extracted
-          rm -f "AI-Trading-Dashboard.zip"
+
+      - name: Fix GitHub remote
+        run: |
+          git remote set-url origin https://github.com/${{ github.repository }}.git
 
       - name: Commit extracted project
         run: |
