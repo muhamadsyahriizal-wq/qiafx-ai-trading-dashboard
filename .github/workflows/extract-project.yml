@@ -1,56 +1,3 @@
-name: Extract QFX Project
-
-on:
-  workflow_dispatch:
-  push:
-    paths:
-      - "*.zip"
-
-permissions:
-  contents: write
-
-jobs:
-  extract:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Extract project ZIP
-        shell: bash
-        run: |
-          set -e
-
-          ZIP="AI-Trading-Dashboard.zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: $ZIP tidak ditemukan."
-            exit 1
-          fi
-
-          echo "Membongkar: $ZIP"
-
-          rm -rf extracted
-          mkdir -p extracted
-
-          unzip -q "$ZIP" -d extracted
-
-          echo "Isi ZIP:"
-          find extracted -maxdepth 3 -type f | head -100
-
-          PROJECT_DIR=$(find extracted -type f -name "package.json" -printf '%h\n' | head -n 1)
-
-          if [ -n "$PROJECT_DIR" ]; then
-            echo "Project ditemukan di: $PROJECT_DIR"
-            cp -a "$PROJECT_DIR"/. ./
-          else
-            echo "package.json tidak ditemukan, menyalin seluruh isi ZIP."
-            cp -a extracted/. ./
-          fi
-
-          rm -rf extracted
-
       - name: Commit extracted project
         shell: bash
         run: |
@@ -59,11 +6,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git fetch origin main
+          git reset --soft origin/main
+
           git add -A
 
           if git diff --cached --quiet; then
             echo "Tidak ada perubahan."
           else
             git commit -m "Extract QFX project"
-            git push
+            git push origin main
           fi
