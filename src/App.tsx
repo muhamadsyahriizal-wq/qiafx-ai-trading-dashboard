@@ -1,126 +1,146 @@
-import { type ReactNode, useEffect, useRef } from 'react';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { ErrorBoundary } from '@/components/error-boundary';
-import { Toaster } from '@/components/ui/toaster';
-import { TooltipProvider } from '@/components/ui/tooltip';
-import {
-  getGetAuthSessionQueryKey,
-  useAuthenticateTelegram,
-  useGetAuthSession,
-  useHealthCheck,
-} from '@workspace/api-client-react';
-import { Activity, BrandLockup, Shell } from '@/components/trading-ui';
-import { DashboardPage } from '@/pages/dashboard';
-import { HistoryPage } from '@/pages/history';
-import NotFound from '@/pages/not-found';
-import { PortfolioPage } from '@/pages/portfolio';
-import { SettingsPage } from '@/pages/settings';
-import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import { useEffect, useState, type ComponentType } from "react";
 
-const queryClient = new QueryClient();
+import { modules as discoveredModules } from "./.generated/mockup-components";
 
-function Router() {
+type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
+
+function _resolveComponent(
+  mod: Record<string, unknown>,
+  name: string,
+): ComponentType | undefined {
+  const fns = Object.values(mod).filter(
+    (v) => typeof v === "function",
+  ) as ComponentType[];
   return (
-    // Keep a shared shell (sidebar, navbar) outside the boundary so it
-    // survives a page crash.
-    <RoutedErrorBoundary>
-      <Switch>
-        <Route path="/" component={DashboardPage} />
-        <Route path="/portfolio" component={PortfolioPage} />
-        <Route path="/history" component={HistoryPage} />
-        <Route path="/settings" component={SettingsPage} />
-        <Route component={NotFound} />
-      </Switch>
-    </RoutedErrorBoundary>
+    (mod.default as ComponentType) ||
+    (mod.Preview as ComponentType) ||
+    (mod[name] as ComponentType) ||
+    fns[fns.length - 1]
   );
 }
 
-function RoutedErrorBoundary({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
-  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
-}
-
-function AuthGate() {
-  const client = useQueryClient();
-  const sessionQuery = useGetAuthSession();
-  const healthQuery = useHealthCheck();
-  const authenticate = useAuthenticateTelegram();
-  const attempted = useRef(false);
-
-  const bootstrap = () => {
-    attempted.current = true;
-    const webApp = (window as Window & {
-      Telegram?: {
-        WebApp?: {
-          initData?: string;
-          initDataUnsafe?: {
-            user?: { id: number; first_name?: string; last_name?: string; username?: string };
-          };
-        };
-      };
-    }).Telegram?.WebApp;
-    const telegramUser = webApp?.initDataUnsafe?.user;
-    authenticate.mutate({
-      data: {
-        initData: webApp?.initData ?? '',
-        user: {
-          id: telegramUser?.id ?? 10001,
-          firstName: telegramUser?.first_name ?? 'Demo',
-          lastName: telegramUser?.last_name ?? 'Trader',
-          username: telegramUser?.username ?? 'demo_trader',
-        },
-      },
-    }, {
-      onSuccess: (session) => {
-        client.setQueryData(getGetAuthSessionQueryKey(), session);
-      },
-    });
-  };
+function PreviewRenderer({
+  componentPath,
+  modules,
+}: {
+  componentPath: string;
+  modules: ModuleMap;
+}) {
+  const [Component, setComponent] = useState<ComponentType | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!attempted.current && ((sessionQuery.isSuccess && !sessionQuery.data?.authenticated) || sessionQuery.isError)) bootstrap();
-  }, [sessionQuery.data?.authenticated, sessionQuery.isError, sessionQuery.isSuccess]);
+    let cancelled = false;
 
-  if (sessionQuery.isLoading || authenticate.isPending || (!sessionQuery.data?.authenticated && !authenticate.isError)) {
-    return <StartupScreen status={authenticate.isPending ? 'Setting up your paper workspace…' : 'Connecting your Telegram session…'} />;
+    setComponent(null);
+    setError(null);
+
+    async function loadComponent(): Promise<void> {
+      const key = `./components/mockups/${componentPath}.tsx`;
+      const loader = modules[key];
+      if (!loader) {
+        setError(`No component found at ${componentPath}.tsx`);
+        return;
+      }
+
+      try {
+        const mod = await loader();
+        if (cancelled) {
+          return;
+        }
+        const name = componentPath.split("/").pop()!;
+        const comp = _resolveComponent(mod, name);
+        if (!comp) {
+          setError(
+            `No exported React component found in ${componentPath}.tsx\n\nMake sure the file has at least one exported function component.`,
+          );
+          return;
+        }
+        setComponent(() => comp);
+      } catch (e) {
+        if (cancelled) {
+          return;
+        }
+
+        const message = e instanceof Error ? e.message : String(e);
+        setError(`Failed to load preview.\n${message}`);
+      }
+    }
+
+    void loadComponent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [componentPath, modules]);
+
+  if (error) {
+    return (
+      <pre style={{ color: "red", padding: "2rem", fontFamily: "system-ui" }}>
+        {error}
+      </pre>
+    );
   }
 
-  if (authenticate.isError || sessionQuery.isError) {
-    return <StartupScreen status="The paper workspace could not connect." retry={bootstrap} />;
-  }
+  if (!Component) return null;
 
-  return <Shell user={sessionQuery.data?.user} health={healthQuery.data?.status}><Router /></Shell>;
+  return <Component />;
 }
 
-function StartupScreen({ status, retry }: { status: string; retry?: () => void }) {
+function getBasePath(): string {
+  return import.meta.env.BASE_URL.replace(/\/$/, "");
+}
+
+function getPreviewExamplePath(): string {
+  const basePath = getBasePath();
+  return `${basePath}/preview/ComponentName`;
+}
+
+function Gallery() {
   return (
-    <div className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-background px-5 text-foreground">
-      <div className="pointer-events-none absolute left-1/2 top-1/2 size-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/[.07] blur-3xl" />
-      <div className="relative w-full max-w-sm text-center">
-        <div className="mb-9 flex justify-center"><BrandLockup /></div>
-        <div className="rounded-2xl border border-border bg-card p-6 shadow-xl">
-          <div className="mx-auto mb-5 grid size-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary"><Activity className={`size-5 ${retry ? '' : 'animate-pulse'}`} /></div>
-          <h1 className="text-xl font-bold tracking-[-.04em]">{retry ? 'Connection paused' : 'Preparing your cockpit'}</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{status}</p>
-          {retry && <button type="button" onClick={retry} className="mt-6 w-full rounded-xl bg-primary py-3 text-sm font-bold text-primary-foreground transition-all hover:brightness-110" data-testid="button-retry-auth">Try connection again</button>}
-        </div>
-        <p className="mt-5 font-mono text-[10px] uppercase tracking-[.18em] text-muted-foreground/70">Paper environment · no live execution</p>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
+      <div className="text-center max-w-md">
+        <h1 className="text-2xl font-semibold text-gray-900 mb-3">
+          Component Preview Server
+        </h1>
+        <p className="text-gray-500 mb-4">
+          This server renders individual components for the workspace canvas.
+        </p>
+        <p className="text-sm text-gray-400">
+          Access component previews at{" "}
+          <code className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+            {getPreviewExamplePath()}
+          </code>
+        </p>
       </div>
     </div>
   );
 }
 
+function getPreviewPath(): string | null {
+  const basePath = getBasePath();
+  const { pathname } = window.location;
+  const local =
+    basePath && pathname.startsWith(basePath)
+      ? pathname.slice(basePath.length) || "/"
+      : pathname;
+  const match = local.match(/^\/preview\/(.+)$/);
+  return match ? match[1] : null;
+}
+
 function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <AuthGate />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
+  const previewPath = getPreviewPath();
+
+  if (previewPath) {
+    return (
+      <PreviewRenderer
+        componentPath={previewPath}
+        modules={discoveredModules}
+      />
+    );
+  }
+
+  return <Gallery />;
 }
 
 export default App;
