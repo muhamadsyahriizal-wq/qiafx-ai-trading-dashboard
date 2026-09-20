@@ -1,12 +1,11 @@
-# Cloudflare build trigger
 name: Prepare QFX Project
 
 on:
-  workflow_dispatch:
   push:
     paths:
       - "*.zip"
       - ".github/workflows/extract-project.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,475 +15,363 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # =========================================================
-      # 1. CHECKOUT REPOSITORY
-      # =========================================================
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: false
           fetch-depth: 0
 
-      # =========================================================
-      # 2. INSTALL EXTRACTION TOOLS
-      # =========================================================
+      # ============================================================
+      # 2. INSTALL TOOLS
+      # ============================================================
       - name: Install extraction tools
         shell: bash
         run: |
-          set -u
+          set -e
 
           sudo apt-get update
           sudo apt-get install -y unzip
 
-          echo "Extraction tools ready."
+          echo "Tools siap."
 
-      # =========================================================
+      # ============================================================
       # 3. FIND APPLICATION ZIP
-      # =========================================================
+      # ============================================================
       - name: Find application ZIP
         shell: bash
         run: |
-          set -u
+          set -e
 
-          echo "Searching for application ZIP..."
+          echo "=========================================="
+          echo "MENCARI ZIP PROJECT QFX"
+          echo "=========================================="
 
-          ZIP_FILE=""
+          FOUND_ZIP=""
 
-          while IFS= read -r -d '' FILE; do
+          for ZIP in ./*.zip; do
+            [ -f "$ZIP" ] || continue
 
             echo ""
-            echo "Checking:"
-            echo "$FILE"
+            echo "Memeriksa: $ZIP"
 
-            if unzip -l "$FILE" 2>/dev/null | grep -q "vite.config.ts"; then
+            rm -rf /tmp/qfx-test
+            mkdir -p /tmp/qfx-test
 
-              if unzip -l "$FILE" 2>/dev/null | grep -q "index.html"; then
+            unzip -q "$ZIP" -d /tmp/qfx-test
 
-                if unzip -l "$FILE" 2>/dev/null | grep -q "package.json"; then
+            if find /tmp/qfx-test \
+              -type f \
+              \( -name "vite.config.ts" -o -name "vite.config.js" \) \
+              | grep -q .; then
 
-                  ZIP_FILE="$FILE"
-                  break
+              FOUND_ZIP="$ZIP"
 
-                fi
+              echo "ZIP project ditemukan:"
+              echo "$FOUND_ZIP"
 
-              fi
-
+              break
             fi
+          done
 
-          done < <(
-            find . \
-              -maxdepth 3 \
-              -type f \
-              -name "*.zip" \
-              -print0
-          )
-
-          if [ -z "$ZIP_FILE" ]; then
-
-            echo ""
-            echo "ERROR: Application ZIP was not found."
-
-            echo ""
-            echo "Available ZIP files:"
-
-            find . \
-              -maxdepth 3 \
-              -type f \
-              -name "*.zip" \
-              -print
-
+          if [ -z "$FOUND_ZIP" ]; then
+            echo "ERROR: ZIP project tidak ditemukan."
             exit 1
-
           fi
 
-          echo ""
-          echo "======================================"
-          echo "SELECTED ZIP"
-          echo "======================================"
-          echo "$ZIP_FILE"
+          echo "FOUND_ZIP=$FOUND_ZIP" >> "$GITHUB_ENV"
 
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-
-      # =========================================================
-      # 4. EXTRACT APPLICATION ZIP
-      # =========================================================
-      - name: Extract application ZIP
+      # ============================================================
+      # 4. EXTRACT ZIP
+      # ============================================================
+      - name: Extract QFX project
         shell: bash
         run: |
-          set -u
+          set -e
+
+          echo "=========================================="
+          echo "MENGEKSTRAK PROJECT"
+          echo "=========================================="
 
           rm -rf extracted
           mkdir -p extracted
 
-          echo "Extracting:"
-          echo "$ZIP_FILE"
-
-          unzip -o "$ZIP_FILE" -d extracted \
-            > /tmp/unzip.log 2>&1
-
-          UNZIP_CODE=$?
-
-          cat /tmp/unzip.log
-
-          if [ "$UNZIP_CODE" -ne 0 ]; then
-
-            echo ""
-            echo "WARNING: unzip returned code $UNZIP_CODE."
-            echo "Continuing to inspect extracted files."
-
-          fi
-
-          test -d extracted
+          unzip -q "$FOUND_ZIP" -d extracted
 
           echo ""
-          echo "Extraction finished."
+          echo "Isi project:"
+          find extracted -maxdepth 5 -type f | head -300
 
-      # =========================================================
-      # 5. REMOVE NESTED GIT METADATA
-      # =========================================================
-      - name: Remove nested Git metadata
+      # ============================================================
+      # 5. FIND THE REAL QFX APPLICATION
+      # ============================================================
+      - name: Locate real QFX application
         shell: bash
         run: |
-          set -u
+          set -e
 
-          find extracted \
-            -type d \
-            -name ".git" \
-            -prune \
-            -exec rm -rf {} + \
-            2>/dev/null || true
-
-          find extracted \
-            -type f \
-            -name ".gitmodules" \
-            -delete \
-            2>/dev/null || true
-
-          find extracted \
-            -type f \
-            -name ".git" \
-            -delete \
-            2>/dev/null || true
-
-          echo "Nested Git cleanup finished."
-
-      # =========================================================
-      # 6. INSPECT EXTRACTED PROJECT
-      # =========================================================
-      - name: Inspect extracted project
-        shell: bash
-        run: |
-          set -u
-
-          echo ""
-          echo "======================================"
-          echo "EXTRACTED DIRECTORIES"
-          echo "======================================"
-
-          find extracted \
-            -maxdepth 5 \
-            -type d \
-            -not -path "*/node_modules*" \
-            | head -300
-
-          echo ""
-          echo "======================================"
-          echo "PROJECT FILES"
-          echo "======================================"
-
-          find extracted \
-            -maxdepth 7 \
-            -type f \
-            -not -path "*/node_modules/*" \
-            -not -path "*/.git/*" \
-            | head -400
-
-      # =========================================================
-      # 7. LOCATE VITE APPLICATION
-      # =========================================================
-      - name: Locate Vite application
-        shell: bash
-        run: |
-          set -u
+          echo "=========================================="
+          echo "MENCARI APLIKASI QFX YANG BENAR"
+          echo "=========================================="
 
           APP_DIR=""
 
-          while IFS= read -r -d '' VITE_FILE; do
+          echo ""
+          echo "Mencari package.json yang memiliki:"
+          echo "- index.html"
+          echo "- vite.config"
+          echo "- src/App.tsx"
+          echo "- src/pages/dashboard.tsx"
+          echo "- @workspace/api-client-react"
 
-            DIR="$(dirname "$VITE_FILE")"
+          while IFS= read -r PKG; do
+            DIR="$(dirname "$PKG")"
 
-            if [ -f "$DIR/index.html" ] &&
-               [ -f "$DIR/package.json" ]; then
+            echo ""
+            echo "Memeriksa kandidat:"
+            echo "$DIR"
 
-              APP_DIR="$DIR"
-              break
-
+            if [ ! -f "$DIR/index.html" ]; then
+              continue
             fi
 
-          done < <(
-            find extracted \
-              -type f \
-              -name "vite.config.ts" \
-              -not -path "*/node_modules/*" \
-              -print0
-          )
+            if [ ! -f "$DIR/src/App.tsx" ]; then
+              continue
+            fi
 
+            if [ ! -f "$DIR/src/pages/dashboard.tsx" ]; then
+              continue
+            fi
+
+            if [ ! -f "$DIR/vite.config.ts" ] && \
+               [ ! -f "$DIR/vite.config.js" ]; then
+              continue
+            fi
+
+            if grep -R -q "@workspace/api-client-react" \
+              "$DIR/src" "$DIR/package.json" 2>/dev/null; then
+
+              APP_DIR="$DIR"
+
+              echo ""
+              echo "=========================================="
+              echo "QFX ASLI DITEMUKAN"
+              echo "=========================================="
+              echo "$APP_DIR"
+
+              break
+            fi
+
+          done < <(find extracted -type f -name "package.json" | sort)
+
+          # ----------------------------------------------------------
+          # Fallback jika pencarian utama gagal
+          # ----------------------------------------------------------
           if [ -z "$APP_DIR" ]; then
 
             echo ""
-            echo "ERROR: Vite application was not found."
+            echo "Pencarian utama gagal."
+            echo "Mencari kandidat berdasarkan dashboard.tsx..."
 
+            while IFS= read -r DASHBOARD; do
+
+              DIR="$(dirname "$DASHBOARD")"
+
+              while [ "$DIR" != "." ] && [ "$DIR" != "/" ]; do
+
+                if [ -f "$DIR/package.json" ] && \
+                   [ -f "$DIR/index.html" ] && \
+                   [ -f "$DIR/vite.config.ts" ] && \
+                   [ -f "$DIR/src/App.tsx" ]; then
+
+                  APP_DIR="$DIR"
+                  break 2
+                fi
+
+                DIR="$(dirname "$DIR")"
+              done
+
+            done < <(
+              find extracted \
+                -type f \
+                -path "*/src/pages/dashboard.tsx" \
+                | sort
+            )
+          fi
+
+          if [ -z "$APP_DIR" ]; then
             echo ""
-            echo "vite.config.ts files:"
-
-            find extracted \
-              -type f \
-              -name "vite.config.ts" \
-              -print
-
+            echo "ERROR: PROJECT QFX TIDAK DITEMUKAN."
             echo ""
-            echo "package.json files:"
+            echo "Kandidat project yang tersedia:"
 
             find extracted \
               -type f \
               -name "package.json" \
-              -not -path "*/node_modules/*" \
-              -print
+              -print \
+              | sort
+
+            echo ""
+            echo "Dashboard yang tersedia:"
+
+            find extracted \
+              -type f \
+              -path "*/src/pages/dashboard.tsx" \
+              -print \
+              | sort
 
             exit 1
-
           fi
-
-          echo ""
-          echo "======================================"
-          echo "APPLICATION FOUND"
-          echo "======================================"
-          echo "$APP_DIR"
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-      # =========================================================
-      # 8. FIND API CLIENT WORKSPACE PACKAGE
-      # =========================================================
-      - name: Find API client workspace package
+      # ============================================================
+      # 6. SHOW SELECTED PROJECT
+      # ============================================================
+      - name: Verify selected QFX project
         shell: bash
         run: |
-          set -u
+          set -e
 
-          API_PACKAGE_DIR=""
+          echo "=========================================="
+          echo "PROJECT QFX TERPILIH"
+          echo "=========================================="
+
+          echo "APP_DIR:"
+          echo "$APP_DIR"
 
           echo ""
-          echo "Searching for @workspace/api-client-react..."
+          echo "App.tsx:"
+          sed -n '1,80p' "$APP_DIR/src/App.tsx"
 
-          while IFS= read -r -d '' PACKAGE_FILE; do
+          echo ""
+          echo "Dashboard:"
+          ls -lh "$APP_DIR/src/pages/dashboard.tsx"
 
-            NAME="$(
-              node -e '
-                const fs = require("fs");
+          echo ""
+          echo "Package:"
+          cat "$APP_DIR/package.json"
 
-                try {
-                  const pkg = JSON.parse(
-                    fs.readFileSync(process.argv[1], "utf8")
-                  );
+      # ============================================================
+      # 7. FIND API CLIENT PACKAGE
+      # ============================================================
+      - name: Locate API client package
+        shell: bash
+        run: |
+          set -e
 
-                  process.stdout.write(pkg.name || "");
+          echo "=========================================="
+          echo "MENCARI API CLIENT"
+          echo "=========================================="
 
-                } catch {
-                  process.stdout.write("");
-                }
-              ' "$PACKAGE_FILE"
-            )"
+          API_DIR=""
 
-            if [ "$NAME" = "@workspace/api-client-react" ]; then
+          # Cari package @workspace/api-client-react
+          while IFS= read -r PKG; do
 
-              API_PACKAGE_DIR="$(dirname "$PACKAGE_FILE")"
+            if grep -q '"name"[[:space:]]*:[[:space:]]*"@workspace/api-client-react"' "$PKG"; then
+              API_DIR="$(dirname "$PKG")"
+
+              echo ""
+              echo "API CLIENT DITEMUKAN:"
+              echo "$API_DIR"
+
               break
-
             fi
 
           done < <(
             find extracted \
               -type f \
               -name "package.json" \
-              -not -path "*/node_modules/*" \
-              -print0
+              | sort
           )
 
-          if [ -z "$API_PACKAGE_DIR" ]; then
-
+          # Cek apakah project terpilih sendiri sudah mempunyai API client
+          if [ -d "$APP_DIR/packages/api-client-react" ]; then
+            API_DIR="$APP_DIR/packages/api-client-react"
             echo ""
-            echo "======================================"
-            echo "ERROR: API CLIENT NOT FOUND"
-            echo "======================================"
-
-            find extracted \
-              -type f \
-              -name "package.json" \
-              -not -path "*/node_modules/*" \
-              -print
-
-            exit 1
-
+            echo "API client berasal dari project QFX:"
+            echo "$API_DIR"
           fi
 
-          echo ""
-          echo "======================================"
-          echo "API CLIENT FOUND"
-          echo "======================================"
-          echo "$API_PACKAGE_DIR"
-
-          echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
-
-      # =========================================================
-      # 9. PREPARE API CLIENT PACKAGE
-      # =========================================================
-      - name: Prepare API client package
-        shell: bash
-        run: |
-          set -u
-
-          rm -rf packages
-          mkdir -p packages
-
-          cp -R \
-            "$API_PACKAGE_DIR" \
-            "packages/api-client-react"
-
-          echo ""
-          echo "API client prepared."
-
-          find packages/api-client-react \
-            -maxdepth 5 \
-            -type f \
-            | head -300
-
-      # =========================================================
-      # 10. COPY APPLICATION TO REPOSITORY ROOT
-      # =========================================================
-      - name: Copy application to repository root
-        shell: bash
-        run: |
-          set -u
-
-          echo ""
-          echo "======================================"
-          echo "PREPARING REPOSITORY ROOT"
-          echo "======================================"
-
-          mkdir -p .qfx-temp
-
-          if [ -f "AI-Trading-Dashboard.zip" ]; then
-
-            cp \
-              "AI-Trading-Dashboard.zip" \
-              ".qfx-temp/AI-Trading-Dashboard.zip"
-
+          if [ -z "$API_DIR" ]; then
+            echo ""
+            echo "WARNING: API client tidak ditemukan di ZIP."
+            echo "Project mungkin tetap menggunakan package yang sudah tersedia."
+          else
+            echo "API_DIR=$API_DIR" >> "$GITHUB_ENV"
           fi
 
-          rm -rf ".qfx-temp/api-client-react"
+      # ============================================================
+      # 8. COPY QFX PROJECT TO ROOT
+      # ============================================================
+      - name: Copy QFX project to repository root
+        shell: bash
+        run: |
+          set -e
 
-          cp -R \
-            "packages/api-client-react" \
-            ".qfx-temp/api-client-react"
+          echo "=========================================="
+          echo "MENYALIN PROJECT QFX KE ROOT"
+          echo "=========================================="
 
-          test -d "$APP_DIR"
-          test -f "$APP_DIR/package.json"
-          test -f "$APP_DIR/index.html"
-          test -f "$APP_DIR/vite.config.ts"
-
-          echo ""
-          echo "Application source:"
-          echo "$APP_DIR"
-
-          echo ""
-          echo "Cleaning old root files..."
-
-          find . -maxdepth 1 \
-            ! -name "." \
+          # Hapus isi repository lama kecuali Git,
+          # workflow, dan ZIP sumber.
+          find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
-            ! -name ".gitignore" \
-            ! -name ".qfx-temp" \
+            ! -name "*.zip" \
             ! -name "extracted" \
-            -exec rm -rf {} + \
-            2>/dev/null || true
+            -exec rm -rf {} +
+
+          cp -a "$APP_DIR"/. ./
 
           echo ""
-          echo "Copying application..."
+          echo "Project QFX berhasil disalin."
 
-          cp -R \
-            "$APP_DIR"/. \
-            .
+      # ============================================================
+      # 9. ENSURE API CLIENT
+      # ============================================================
+      - name: Ensure API client package
+        shell: bash
+        run: |
+          set -e
 
-          echo ""
-          echo "Restoring API client..."
+          echo "=========================================="
+          echo "MENYIAPKAN API CLIENT"
+          echo "=========================================="
 
-          mkdir -p packages
-
-          rm -rf packages/api-client-react
-
-          cp -R \
-            ".qfx-temp/api-client-react" \
-            "packages/api-client-react"
-
-          if [ -f ".qfx-temp/AI-Trading-Dashboard.zip" ]; then
-
-            cp \
-              ".qfx-temp/AI-Trading-Dashboard.zip" \
-              "AI-Trading-Dashboard.zip"
-
+          if [ -d "packages/api-client-react" ]; then
+            echo "API client sudah ada:"
+            echo "packages/api-client-react"
+          elif [ -n "${API_DIR:-}" ] && [ -d "$API_DIR" ]; then
+            mkdir -p packages
+            cp -a "$API_DIR" packages/api-client-react
+            echo "API client berhasil disalin."
+          else
+            echo "WARNING: API client tidak ditemukan."
           fi
 
-          echo ""
-          echo "Application copied successfully."
-
-      # =========================================================
-      # 11. FINAL GIT CLEANUP
-      # =========================================================
-      - name: Final Git cleanup
+      # ============================================================
+      # 10. FIX PACKAGE.JSON
+      # ============================================================
+      - name: Prepare package.json
         shell: bash
         run: |
-          set -u
+          set -e
 
-          echo "Removing nested Git metadata..."
+          echo "=========================================="
+          echo "MEMPERBAIKI PACKAGE.JSON"
+          echo "=========================================="
 
-          find . \
-            -mindepth 2 \
-            -type d \
-            -name ".git" \
-            -prune \
-            -exec rm -rf {} + \
-            2>/dev/null || true
-
-          find . \
-            -type f \
-            -name ".gitmodules" \
-            -not -path "./.git/*" \
-            -delete \
-            2>/dev/null || true
-
-          echo "Git cleanup complete."
-
-      # =========================================================
-      # 12. FIX WORKSPACE DEPENDENCY
-      # =========================================================
-      - name: Fix workspace dependency
-        shell: bash
-        run: |
-          set -u
-
-          echo ""
-          echo "Fixing workspace dependencies..."
+          test -f package.json
 
           node <<'NODE'
           const fs = require("fs");
 
           const file = "package.json";
-
-          const pkg = JSON.parse(
-            fs.readFileSync(file, "utf8")
-          );
+          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
 
           const sections = [
             "dependencies",
@@ -493,21 +380,43 @@ jobs:
           ];
 
           for (const section of sections) {
+            if (!pkg[section]) continue;
 
-            if (!pkg[section]) {
-              continue;
-            }
+            for (const [name, value] of Object.entries(pkg[section])) {
 
-            if (
-              pkg[section]["@workspace/api-client-react"]
-            ) {
+              if (value === "workspace:*") {
+                if (name === "@workspace/api-client-react") {
+                  pkg[section][name] = "file:./packages/api-client-react";
+                  console.log(
+                    `${name}: workspace:* -> file:./packages/api-client-react`
+                  );
+                }
+              }
 
-              pkg[section]["@workspace/api-client-react"] =
-                "file:./packages/api-client-react";
+              if (value === "catalog:") {
+                console.log(`catalog ditemukan: ${name}`);
 
-              console.log(
-                "Converted @workspace/api-client-react"
-              );
+                const { execSync } = require("child_process");
+
+                const version = execSync(
+                  `npm view "${name}" version`,
+                  {
+                    encoding: "utf8"
+                  }
+                ).trim();
+
+                if (!version) {
+                  throw new Error(
+                    `Tidak dapat menemukan versi npm untuk ${name}`
+                  );
+                }
+
+                pkg[section][name] = `^${version}`;
+
+                console.log(
+                  `${name}: catalog: -> ^${version}`
+                );
+              }
             }
           }
 
@@ -515,174 +424,40 @@ jobs:
             file,
             JSON.stringify(pkg, null, 2) + "\n"
           );
+
+          console.log("package.json selesai.");
           NODE
 
           echo ""
-          echo "API client dependency:"
-
-          grep -n \
-            "api-client-react" \
-            package.json || true
-
-      # =========================================================
-      # 13. RESOLVE ALL CATALOG DEPENDENCIES
-      # =========================================================
-      - name: Resolve all catalog dependencies
-        shell: bash
-        run: |
-          set -u
+          echo "Package API client:"
+          grep -n "@workspace/api-client-react" package.json || true
 
           echo ""
-          echo "======================================"
-          echo "RESOLVING CATALOG DEPENDENCIES"
-          echo "======================================"
+          echo "Memastikan tidak ada catalog:"
 
-          node <<'NODE'
-          const fs = require("fs");
-          const path = require("path");
-
-          const packageFiles = [];
-
-          function scan(dir) {
-
-            if (!fs.existsSync(dir)) {
-              return;
-            }
-
-            for (const entry of fs.readdirSync(dir, {
-              withFileTypes: true
-            })) {
-
-              if (
-                entry.name === "node_modules" ||
-                entry.name === ".git" ||
-                entry.name === "dist" ||
-                entry.name === "build"
-              ) {
-                continue;
-              }
-
-              const fullPath =
-                path.join(dir, entry.name);
-
-              if (entry.isDirectory()) {
-                scan(fullPath);
-              }
-
-              if (
-                entry.isFile() &&
-                entry.name === "package.json"
-              ) {
-                packageFiles.push(fullPath);
-              }
-            }
-          }
-
-          scan(".");
-
-          const files = [
-            ...new Set(packageFiles)
-          ];
-
-          const sections = [
-            "dependencies",
-            "devDependencies",
-            "optionalDependencies",
-            "peerDependencies"
-          ];
-
-          for (const file of files) {
-
-            let pkg;
-
-            try {
-
-              pkg = JSON.parse(
-                fs.readFileSync(file, "utf8")
-              );
-
-            } catch {
-
-              continue;
-
-            }
-
-            let changed = false;
-
-            for (const section of sections) {
-
-              if (!pkg[section]) {
-                continue;
-              }
-
-              for (
-                const [name, value]
-                of Object.entries(pkg[section])
-              ) {
-
-                if (
-                  typeof value === "string" &&
-                  value.startsWith("catalog:")
-                ) {
-
-                  console.log(
-                    `Replacing ${name}=${value} in ${file}`
-                  );
-
-                  pkg[section][name] = "latest";
-
-                  changed = true;
-                }
-              }
-            }
-
-            if (changed) {
-
-              fs.writeFileSync(
-                file,
-                JSON.stringify(pkg, null, 2) + "\n"
-              );
-
-            }
-          }
-
-          console.log("");
-          console.log("Catalog dependency cleanup finished.");
-          NODE
-
-          echo ""
-          echo "Checking for remaining catalog references..."
-
-          if grep -R \
-            "catalog:" \
-            package.json \
-            packages/*/package.json \
-            2>/dev/null; then
-
-            echo ""
-            echo "ERROR: catalog dependency still exists."
-
+          if grep -R '"catalog:"' package.json; then
+            echo "ERROR: catalog masih ditemukan."
             exit 1
-
-          else
-
-            echo ""
-            echo "SUCCESS: no catalog dependencies remain."
-
           fi
 
-      # =========================================================
-      # 14. CREATE STANDALONE TYPESCRIPT CONFIGURATION
-      # =========================================================
-      - name: Create standalone TypeScript configuration
+      # ============================================================
+      # 11. FIX TYPESCRIPT CONFIG
+      # ============================================================
+      - name: Fix TypeScript configuration
         shell: bash
         run: |
-          set -u
+          set -e
 
-          echo ""
-          echo "Creating standalone tsconfig.json..."
+          echo "=========================================="
+          echo "MEMERIKSA TSCONFIG"
+          echo "=========================================="
 
-          cat > tsconfig.json <<'EOF'
+          if [ -f tsconfig.json ]; then
+            echo "tsconfig.json ditemukan."
+          else
+            echo "Membuat tsconfig.json..."
+
+            cat > tsconfig.json <<'EOF'
           {
             "compilerOptions": {
               "target": "ES2022",
@@ -704,215 +479,202 @@ jobs:
               "isolatedModules": true,
               "noEmit": true,
               "jsx": "react-jsx",
+              "incremental": true,
               "types": [
                 "node",
                 "vite/client"
               ],
+              "baseUrl": ".",
               "paths": {
                 "@/*": [
                   "./src/*"
-                ],
-                "@workspace/api-client-react": [
-                  "./packages/api-client-react"
                 ]
               }
             },
             "include": [
               "src/**/*",
-              "vite.config.ts",
-              "mockupPreviewPlugin.ts"
+              "mockupPreviewPlugin.ts",
+              "vite.config.ts"
             ],
             "exclude": [
               "node_modules",
-              "dist",
               "build",
-              "**/*.test.ts",
-              "**/*.test.tsx"
+              "dist",
+              "**/*.test.ts"
             ]
           }
           EOF
+          fi
 
-          echo ""
-          echo "Standalone tsconfig.json created."
-
-          cat tsconfig.json
-
-      # =========================================================
-      # 15. FIX TYPECHECK SCRIPT
-      # =========================================================
-      - name: Fix typecheck script
+      # ============================================================
+      # 12. VERIFY THAT THIS IS REALLY QFX
+      # ============================================================
+      - name: Verify QFX application
         shell: bash
         run: |
-          set -u
+          set -e
 
-          node <<'NODE'
-          const fs = require("fs");
-
-          const file = "package.json";
-
-          const pkg = JSON.parse(
-            fs.readFileSync(file, "utf8")
-          );
-
-          if (!pkg.scripts) {
-            pkg.scripts = {};
-          }
-
-          pkg.scripts.typecheck =
-            "tsc -p tsconfig.json --noEmit";
-
-          fs.writeFileSync(
-            file,
-            JSON.stringify(pkg, null, 2) + "\n"
-          );
-          NODE
-
-          echo "Typecheck script fixed."
-
-      # =========================================================
-      # 16. VERIFY PROJECT STRUCTURE
-      # =========================================================
-      - name: Verify project structure
-        shell: bash
-        run: |
-          set -u
-
-          echo ""
-          echo "======================================"
-          echo "PROJECT CHECK"
-          echo "======================================"
+          echo "=========================================="
+          echo "VERIFIKASI FINAL PROJECT QFX"
+          echo "=========================================="
 
           test -f package.json
           test -f index.html
-          test -f vite.config.ts
-          test -f tsconfig.json
-          test -d src
-          test -d packages/api-client-react
-          test -f packages/api-client-react/package.json
+          test -f src/App.tsx
+          test -f src/pages/dashboard.tsx
+          test -f vite.config.ts || test -f vite.config.js
 
           echo ""
-          echo "All required files exist."
+          echo "package.json OK"
+          echo "index.html OK"
+          echo "src/App.tsx OK"
+          echo "src/pages/dashboard.tsx OK"
+          echo "vite.config OK"
 
-      # =========================================================
-      # 17. INSTALL DEPENDENCIES
-      # =========================================================
+          echo ""
+          echo "Memastikan App.tsx bukan Component Preview Server..."
+
+          if grep -q "Component Preview Server" src/App.tsx; then
+            echo ""
+            echo "ERROR:"
+            echo "App.tsx masih merupakan mockup Component Preview Server."
+            echo "Workflow berhenti agar aplikasi salah tidak masuk Cloudflare."
+            exit 1
+          fi
+
+          echo ""
+          echo "App.tsx bukan mockup preview server."
+
+          echo ""
+          echo "Memastikan API client digunakan..."
+
+          if grep -R -q "@workspace/api-client-react" src package.json; then
+            echo "API client ditemukan."
+          else
+            echo "ERROR: @workspace/api-client-react tidak ditemukan."
+            exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "VERIFIKASI QFX BERHASIL"
+          echo "=========================================="
+
+          echo ""
+          echo "Struktur src:"
+          find src -maxdepth 3 -type f | sort | head -250
+
+      # ============================================================
+      # 13. INSTALL DEPENDENCIES
+      # ============================================================
       - name: Install dependencies
         shell: bash
         run: |
-          set -u
+          set -e
 
-          echo ""
-          echo "======================================"
-          echo "NPM INSTALL"
-          echo "======================================"
+          echo "=========================================="
+          echo "INSTALL DEPENDENCIES"
+          echo "=========================================="
 
           npm install --legacy-peer-deps
 
-      # =========================================================
-      # 18. TYPESCRIPT CHECK
-      # =========================================================
-      - name: TypeScript typecheck
+      # ============================================================
+      # 14. TYPECHECK
+      # ============================================================
+      - name: Typecheck
         shell: bash
         run: |
-          set -u
+          set -e
 
-          echo ""
-          echo "======================================"
-          echo "TYPESCRIPT CHECK"
-          echo "======================================"
+          echo "=========================================="
+          echo "TYPECHECK"
+          echo "=========================================="
 
           npx tsc \
             -p tsconfig.json \
             --noEmit \
             --skipLibCheck
 
-      # =========================================================
-      # 19. PRODUCTION BUILD
-      # =========================================================
+      # ============================================================
+      # 15. PRODUCTION BUILD
+      # ============================================================
       - name: Production build
         shell: bash
         env:
           PORT: "5173"
           BASE_PATH: "/"
         run: |
-          set -u
+          set -e
 
-          echo ""
-          echo "======================================"
+          echo "=========================================="
           echo "PRODUCTION BUILD"
-          echo "======================================"
+          echo "=========================================="
 
           echo "PORT=$PORT"
           echo "BASE_PATH=$BASE_PATH"
 
           npm run build
 
-      # =========================================================
-      # 20. CLEAN TEMPORARY FILES
-      # =========================================================
-      - name: Clean temporary files
+      # ============================================================
+      # 16. FINAL CHECK
+      # ============================================================
+      - name: Final verification
         shell: bash
         run: |
-          set -u
+          set -e
 
-          rm -rf .qfx-temp
-          rm -rf extracted
+          echo "=========================================="
+          echo "FINAL VERIFICATION"
+          echo "=========================================="
 
-          echo "Temporary files removed."
+          if [ ! -d dist ]; then
+            echo "ERROR: dist tidak ditemukan."
+            exit 1
+          fi
 
-      # =========================================================
-      # 21. FINAL PROJECT VERIFICATION
-      # =========================================================
-      - name: Final project verification
-        shell: bash
-        run: |
-          set -u
-
-          echo ""
-          echo "======================================"
-          echo "FINAL QFX PROJECT"
-          echo "======================================"
+          if [ ! -f dist/index.html ]; then
+            echo "ERROR: dist/index.html tidak ditemukan."
+            exit 1
+          fi
 
           echo ""
-          echo "Root:"
-          ls -la
+          echo "dist/ ditemukan."
+          echo "dist/index.html ditemukan."
 
           echo ""
-          echo "API client:"
-          ls -la packages/api-client-react
+          echo "=========================================="
+          echo "QFX PROJECT SIAP DEPLOY"
+          echo "=========================================="
 
-          echo ""
-          echo "Build output:"
-          ls -la dist 2>/dev/null || true
-
-          echo ""
-          echo "QFX project verification complete."
-
-      # =========================================================
-      # 22. COMMIT PREPARED PROJECT
-      # =========================================================
+      # ============================================================
+      # 17. COMMIT PREPARED PROJECT
+      # ============================================================
       - name: Commit prepared project
         shell: bash
         run: |
-          set -u
+          set -e
 
-          git config user.name \
-            "github-actions[bot]"
+          echo "=========================================="
+          echo "COMMIT PROJECT QFX"
+          echo "=========================================="
 
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
 
           if git diff --cached --quiet; then
-
-            echo "No changes to commit."
-
-          else
-
-            git commit \
-              -m "Prepare QFX dashboard for Cloudflare"
-
-            git push
-
+            echo "Tidak ada perubahan."
+            exit 0
           fi
+
+          git commit -m "Prepare QFX project"
+
+          git pull --rebase origin main
+
+          git push origin main
+
+          echo ""
+          echo "=========================================="
+          echo "PROJECT QFX BERHASIL DISIAPKAN"
+          echo "=========================================="
