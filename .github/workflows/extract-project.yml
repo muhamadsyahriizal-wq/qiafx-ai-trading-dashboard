@@ -15,18 +15,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ============================================================
-      # 1. CHECKOUT
-      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: false
           fetch-depth: 0
 
-      # ============================================================
-      # 2. INSTALL TOOLS
-      # ============================================================
       - name: Install extraction tools
         shell: bash
         run: |
@@ -35,11 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unzip
 
-          echo "Tools siap."
+          echo "=========================================="
+          echo "TOOLS SIAP"
+          echo "=========================================="
 
-      # ============================================================
-      # 3. FIND APPLICATION ZIP
-      # ============================================================
       - name: Find application ZIP
         shell: bash
         run: |
@@ -65,11 +58,12 @@ jobs:
             if find /tmp/qfx-test \
               -type f \
               \( -name "vite.config.ts" -o -name "vite.config.js" \) \
-              | grep -q .; then
+              -print -quit | grep -q .; then
 
               FOUND_ZIP="$ZIP"
 
-              echo "ZIP project ditemukan:"
+              echo ""
+              echo "ZIP PROJECT DITEMUKAN:"
               echo "$FOUND_ZIP"
 
               break
@@ -77,22 +71,20 @@ jobs:
           done
 
           if [ -z "$FOUND_ZIP" ]; then
-            echo "ERROR: ZIP project tidak ditemukan."
+            echo ""
+            echo "ERROR: ZIP PROJECT TIDAK DITEMUKAN."
             exit 1
           fi
 
           echo "FOUND_ZIP=$FOUND_ZIP" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # 4. EXTRACT ZIP
-      # ============================================================
       - name: Extract QFX project
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MENGEKSTRAK PROJECT"
+          echo "EXTRACT PROJECT QFX"
           echo "=========================================="
 
           rm -rf extracted
@@ -101,36 +93,33 @@ jobs:
           unzip -q "$FOUND_ZIP" -d extracted
 
           echo ""
-          echo "Isi project:"
-          find extracted -maxdepth 5 -type f | head -300
+          echo "PROJECT BERHASIL DI-EXTRACT."
+          echo ""
+          echo "Daftar file project:"
 
-      # ============================================================
-      # 5. FIND THE REAL QFX APPLICATION
-      # ============================================================
+          find extracted \
+            -maxdepth 5 \
+            -type f \
+            ! -path "*/.git/*" \
+            -print \
+            | sed -n '1,300p'
+
       - name: Locate real QFX application
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MENCARI APLIKASI QFX YANG BENAR"
+          echo "MENCARI APLIKASI QFX ASLI"
           echo "=========================================="
 
           APP_DIR=""
-
-          echo ""
-          echo "Mencari package.json yang memiliki:"
-          echo "- index.html"
-          echo "- vite.config"
-          echo "- src/App.tsx"
-          echo "- src/pages/dashboard.tsx"
-          echo "- @workspace/api-client-react"
 
           while IFS= read -r PKG; do
             DIR="$(dirname "$PKG")"
 
             echo ""
-            echo "Memeriksa kandidat:"
+            echo "Memeriksa:"
             echo "$DIR"
 
             if [ ! -f "$DIR/index.html" ]; then
@@ -151,7 +140,9 @@ jobs:
             fi
 
             if grep -R -q "@workspace/api-client-react" \
-              "$DIR/src" "$DIR/package.json" 2>/dev/null; then
+              "$DIR/src" \
+              "$DIR/package.json" \
+              2>/dev/null; then
 
               APP_DIR="$DIR"
 
@@ -164,16 +155,18 @@ jobs:
               break
             fi
 
-          done < <(find extracted -type f -name "package.json" | sort)
+          done < <(
+            find extracted \
+              -type f \
+              -name "package.json" \
+              ! -path "*/.git/*" \
+              | sort
+          )
 
-          # ----------------------------------------------------------
-          # Fallback jika pencarian utama gagal
-          # ----------------------------------------------------------
           if [ -z "$APP_DIR" ]; then
 
             echo ""
-            echo "Pencarian utama gagal."
-            echo "Mencari kandidat berdasarkan dashboard.tsx..."
+            echo "Pencarian kedua berdasarkan dashboard.tsx..."
 
             while IFS= read -r DASHBOARD; do
 
@@ -183,7 +176,7 @@ jobs:
 
                 if [ -f "$DIR/package.json" ] && \
                    [ -f "$DIR/index.html" ] && \
-                   [ -f "$DIR/vite.config.ts" ] && \
+                   { [ -f "$DIR/vite.config.ts" ] || [ -f "$DIR/vite.config.js" ]; } && \
                    [ -f "$DIR/src/App.tsx" ]; then
 
                   APP_DIR="$DIR"
@@ -191,72 +184,86 @@ jobs:
                 fi
 
                 DIR="$(dirname "$DIR")"
+
               done
 
             done < <(
               find extracted \
                 -type f \
                 -path "*/src/pages/dashboard.tsx" \
+                ! -path "*/.git/*" \
                 | sort
             )
           fi
 
           if [ -z "$APP_DIR" ]; then
+
             echo ""
-            echo "ERROR: PROJECT QFX TIDAK DITEMUKAN."
+            echo "=========================================="
+            echo "ERROR: PROJECT QFX TIDAK DITEMUKAN"
+            echo "=========================================="
+
             echo ""
-            echo "Kandidat project yang tersedia:"
+            echo "package.json yang ditemukan:"
 
             find extracted \
               -type f \
               -name "package.json" \
+              ! -path "*/.git/*" \
               -print \
               | sort
 
             echo ""
-            echo "Dashboard yang tersedia:"
+            echo "dashboard.tsx yang ditemukan:"
 
             find extracted \
               -type f \
               -path "*/src/pages/dashboard.tsx" \
+              ! -path "*/.git/*" \
               -print \
               | sort
 
             exit 1
           fi
 
+          echo ""
+          echo "APP_DIR=$APP_DIR"
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # 6. SHOW SELECTED PROJECT
-      # ============================================================
       - name: Verify selected QFX project
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "PROJECT QFX TERPILIH"
+          echo "VERIFIKASI PROJECT QFX"
           echo "=========================================="
 
+          echo ""
           echo "APP_DIR:"
           echo "$APP_DIR"
 
           echo ""
-          echo "App.tsx:"
-          sed -n '1,80p' "$APP_DIR/src/App.tsx"
+          echo "=========================================="
+          echo "App.tsx"
+          echo "=========================================="
+
+          sed -n '1,120p' "$APP_DIR/src/App.tsx"
 
           echo ""
-          echo "Dashboard:"
+          echo "=========================================="
+          echo "Dashboard"
+          echo "=========================================="
+
           ls -lh "$APP_DIR/src/pages/dashboard.tsx"
 
           echo ""
-          echo "Package:"
+          echo "=========================================="
+          echo "package.json"
+          echo "=========================================="
+
           cat "$APP_DIR/package.json"
 
-      # ============================================================
-      # 7. FIND API CLIENT PACKAGE
-      # ============================================================
       - name: Locate API client package
         shell: bash
         run: |
@@ -268,10 +275,12 @@ jobs:
 
           API_DIR=""
 
-          # Cari package @workspace/api-client-react
           while IFS= read -r PKG; do
 
-            if grep -q '"name"[[:space:]]*:[[:space:]]*"@workspace/api-client-react"' "$PKG"; then
+            if grep -q \
+              '"name"[[:space:]]*:[[:space:]]*"@workspace/api-client-react"' \
+              "$PKG"; then
+
               API_DIR="$(dirname "$PKG")"
 
               echo ""
@@ -285,40 +294,37 @@ jobs:
             find extracted \
               -type f \
               -name "package.json" \
+              ! -path "*/.git/*" \
               | sort
           )
 
-          # Cek apakah project terpilih sendiri sudah mempunyai API client
           if [ -d "$APP_DIR/packages/api-client-react" ]; then
             API_DIR="$APP_DIR/packages/api-client-react"
-            echo ""
-            echo "API client berasal dari project QFX:"
-            echo "$API_DIR"
           fi
 
           if [ -z "$API_DIR" ]; then
+
             echo ""
-            echo "WARNING: API client tidak ditemukan di ZIP."
-            echo "Project mungkin tetap menggunakan package yang sudah tersedia."
+            echo "WARNING: API CLIENT TIDAK DITEMUKAN."
+
           else
+
             echo "API_DIR=$API_DIR" >> "$GITHUB_ENV"
+
           fi
 
-      # ============================================================
-      # 8. COPY QFX PROJECT TO ROOT
-      # ============================================================
       - name: Copy QFX project to repository root
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MENYALIN PROJECT QFX KE ROOT"
+          echo "MENYALIN PROJECT QFX KE ROOT REPOSITORY"
           echo "=========================================="
 
-          # Hapus isi repository lama kecuali Git,
-          # workflow, dan ZIP sumber.
-          find . -mindepth 1 -maxdepth 1 \
+          find . \
+            -mindepth 1 \
+            -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
             ! -name "*.zip" \
@@ -328,50 +334,55 @@ jobs:
           cp -a "$APP_DIR"/. ./
 
           echo ""
-          echo "Project QFX berhasil disalin."
+          echo "Project QFX sudah disalin ke root."
 
-      # ============================================================
-      # 9. ENSURE API CLIENT
-      # ============================================================
       - name: Ensure API client package
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MENYIAPKAN API CLIENT"
+          echo "MEMASTIKAN API CLIENT ADA"
           echo "=========================================="
 
           if [ -d "packages/api-client-react" ]; then
-            echo "API client sudah ada:"
-            echo "packages/api-client-react"
+
+            echo "API client sudah ada."
+
           elif [ -n "${API_DIR:-}" ] && [ -d "$API_DIR" ]; then
+
             mkdir -p packages
+
             cp -a "$API_DIR" packages/api-client-react
+
             echo "API client berhasil disalin."
+
           else
+
             echo "WARNING: API client tidak ditemukan."
+
           fi
 
-      # ============================================================
-      # 10. FIX PACKAGE.JSON
-      # ============================================================
       - name: Prepare package.json
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MEMPERBAIKI PACKAGE.JSON"
+          echo "MENYIAPKAN PACKAGE.JSON"
           echo "=========================================="
 
           test -f package.json
 
           node <<'NODE'
           const fs = require("fs");
+          const { execSync } = require("child_process");
 
           const file = "package.json";
-          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+
+          const pkg = JSON.parse(
+            fs.readFileSync(file, "utf8")
+          );
 
           const sections = [
             "dependencies",
@@ -380,13 +391,20 @@ jobs:
           ];
 
           for (const section of sections) {
-            if (!pkg[section]) continue;
+
+            if (!pkg[section]) {
+              continue;
+            }
 
             for (const [name, value] of Object.entries(pkg[section])) {
 
               if (value === "workspace:*") {
+
                 if (name === "@workspace/api-client-react") {
-                  pkg[section][name] = "file:./packages/api-client-react";
+
+                  pkg[section][name] =
+                    "file:./packages/api-client-react";
+
                   console.log(
                     `${name}: workspace:* -> file:./packages/api-client-react`
                   );
@@ -394,9 +412,10 @@ jobs:
               }
 
               if (value === "catalog:") {
-                console.log(`catalog ditemukan: ${name}`);
 
-                const { execSync } = require("child_process");
+                console.log(
+                  `Mencari versi npm untuk ${name}...`
+                );
 
                 const version = execSync(
                   `npm view "${name}" version`,
@@ -428,21 +447,14 @@ jobs:
           console.log("package.json selesai.");
           NODE
 
-          echo ""
-          echo "Package API client:"
-          grep -n "@workspace/api-client-react" package.json || true
-
-          echo ""
-          echo "Memastikan tidak ada catalog:"
-
           if grep -R '"catalog:"' package.json; then
+
+            echo ""
             echo "ERROR: catalog masih ditemukan."
             exit 1
+
           fi
 
-      # ============================================================
-      # 11. FIX TYPESCRIPT CONFIG
-      # ============================================================
       - name: Fix TypeScript configuration
         shell: bash
         run: |
@@ -453,8 +465,12 @@ jobs:
           echo "=========================================="
 
           if [ -f tsconfig.json ]; then
+
             echo "tsconfig.json ditemukan."
+
           else
+
+            echo "tsconfig.json tidak ditemukan."
             echo "Membuat tsconfig.json..."
 
             cat > tsconfig.json <<'EOF'
@@ -504,69 +520,71 @@ jobs:
             ]
           }
           EOF
+
           fi
 
-      # ============================================================
-      # 12. VERIFY THAT THIS IS REALLY QFX
-      # ============================================================
       - name: Verify QFX application
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "VERIFIKASI FINAL PROJECT QFX"
+          echo "VERIFIKASI AKHIR APLIKASI QFX"
           echo "=========================================="
 
           test -f package.json
           test -f index.html
           test -f src/App.tsx
           test -f src/pages/dashboard.tsx
-          test -f vite.config.ts || test -f vite.config.js
 
-          echo ""
-          echo "package.json OK"
-          echo "index.html OK"
-          echo "src/App.tsx OK"
-          echo "src/pages/dashboard.tsx OK"
-          echo "vite.config OK"
-
-          echo ""
-          echo "Memastikan App.tsx bukan Component Preview Server..."
-
-          if grep -q "Component Preview Server" src/App.tsx; then
-            echo ""
-            echo "ERROR:"
-            echo "App.tsx masih merupakan mockup Component Preview Server."
-            echo "Workflow berhenti agar aplikasi salah tidak masuk Cloudflare."
-            exit 1
-          fi
-
-          echo ""
-          echo "App.tsx bukan mockup preview server."
-
-          echo ""
-          echo "Memastikan API client digunakan..."
-
-          if grep -R -q "@workspace/api-client-react" src package.json; then
-            echo "API client ditemukan."
+          if [ -f vite.config.ts ]; then
+            echo "vite.config.ts ditemukan."
+          elif [ -f vite.config.js ]; then
+            echo "vite.config.js ditemukan."
           else
-            echo "ERROR: @workspace/api-client-react tidak ditemukan."
+            echo "ERROR: vite.config tidak ditemukan."
+            exit 1
+          fi
+
+          if grep -q \
+            "Component Preview Server" \
+            src/App.tsx; then
+
+            echo ""
+            echo "ERROR: App.tsx masih merupakan"
+            echo "mockup Component Preview Server."
+
+            exit 1
+          fi
+
+          if grep -R -q \
+            "@workspace/api-client-react" \
+            src package.json; then
+
+            echo ""
+            echo "API client ditemukan."
+
+          else
+
+            echo ""
+            echo "ERROR: @workspace/api-client-react"
+            echo "tidak ditemukan."
+
             exit 1
           fi
 
           echo ""
           echo "=========================================="
-          echo "VERIFIKASI QFX BERHASIL"
+          echo "DAFTAR FILE SRC"
           echo "=========================================="
 
-          echo ""
-          echo "Struktur src:"
-          find src -maxdepth 3 -type f | sort | head -250
+          find src \
+            -maxdepth 3 \
+            -type f \
+            -print \
+            | sort \
+            | sed -n '1,250p'
 
-      # ============================================================
-      # 13. INSTALL DEPENDENCIES
-      # ============================================================
       - name: Install dependencies
         shell: bash
         run: |
@@ -578,9 +596,6 @@ jobs:
 
           npm install --legacy-peer-deps
 
-      # ============================================================
-      # 14. TYPECHECK
-      # ============================================================
       - name: Typecheck
         shell: bash
         run: |
@@ -595,9 +610,6 @@ jobs:
             --noEmit \
             --skipLibCheck
 
-      # ============================================================
-      # 15. PRODUCTION BUILD
-      # ============================================================
       - name: Production build
         shell: bash
         env:
@@ -610,14 +622,8 @@ jobs:
           echo "PRODUCTION BUILD"
           echo "=========================================="
 
-          echo "PORT=$PORT"
-          echo "BASE_PATH=$BASE_PATH"
-
           npm run build
 
-      # ============================================================
-      # 16. FINAL CHECK
-      # ============================================================
       - name: Final verification
         shell: bash
         run: |
@@ -627,28 +633,16 @@ jobs:
           echo "FINAL VERIFICATION"
           echo "=========================================="
 
-          if [ ! -d dist ]; then
-            echo "ERROR: dist tidak ditemukan."
-            exit 1
-          fi
-
-          if [ ! -f dist/index.html ]; then
-            echo "ERROR: dist/index.html tidak ditemukan."
-            exit 1
-          fi
-
-          echo ""
-          echo "dist/ ditemukan."
-          echo "dist/index.html ditemukan."
+          test -d dist
+          test -f dist/index.html
 
           echo ""
           echo "=========================================="
           echo "QFX PROJECT SIAP DEPLOY"
           echo "=========================================="
 
-      # ============================================================
-      # 17. COMMIT PREPARED PROJECT
-      # ============================================================
+          echo "dist/index.html ditemukan."
+
       - name: Commit prepared project
         shell: bash
         run: |
@@ -658,23 +652,33 @@ jobs:
           echo "COMMIT PROJECT QFX"
           echo "=========================================="
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
 
           if git diff --cached --quiet; then
-            echo "Tidak ada perubahan."
+
+            echo "Tidak ada perubahan untuk di-commit."
+
             exit 0
+
           fi
 
-          git commit -m "Prepare QFX project"
+          git commit \
+            -m "Prepare QFX project"
 
-          git pull --rebase origin main
+          git pull \
+            --rebase \
+            origin main
 
-          git push origin main
+          git push \
+            origin main
 
           echo ""
           echo "=========================================="
-          echo "PROJECT QFX BERHASIL DISIAPKAN"
+          echo "PROJECT QFX BERHASIL DI-PUSH"
           echo "=========================================="
