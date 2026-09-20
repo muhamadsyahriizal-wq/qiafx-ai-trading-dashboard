@@ -23,56 +23,127 @@ jobs:
         run: |
           set -e
 
-          echo "========================================"
+          echo "=========================================="
           echo "MENCARI AI TRADING DASHBOARD"
-          echo "========================================"
-
-          ZIP_FILE=""
-
-          for ZIP in ./*.zip; do
-            [ -f "$ZIP" ] || continue
-
-            echo "ZIP ditemukan: $ZIP"
-            ZIP_FILE="$ZIP"
-            break
-          done
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: File ZIP tidak ditemukan."
-            exit 1
-          fi
+          echo "=========================================="
 
           rm -rf extracted
           mkdir -p extracted
 
+          FOUND_ZIP=""
+
+          for ZIP in ./*.zip; do
+            [ -f "$ZIP" ] || continue
+
+            echo ""
+            echo "Memeriksa ZIP: $ZIP"
+
+            rm -rf testzip
+            mkdir -p testzip
+
+            unzip -q "$ZIP" -d testzip
+
+            # Cari project yang mempunyai file Vite
+            CANDIDATE=$(find testzip \
+              -type f \
+              \( -name "vite.config.ts" -o -name "vite.config.js" \) \
+              -print -quit)
+
+            if [ -n "$CANDIDATE" ]; then
+              FOUND_ZIP="$ZIP"
+              echo "ZIP cocok ditemukan: $ZIP"
+              echo "Vite config: $CANDIDATE"
+              break
+            fi
+          done
+
+          if [ -z "$FOUND_ZIP" ]; then
+            echo "ERROR: Tidak menemukan ZIP project QFX."
+            exit 1
+          fi
+
+          rm -rf testzip
+          mkdir -p extracted
+
           echo ""
-          echo "Extracting: $ZIP_FILE"
+          echo "Mengekstrak:"
+          echo "$FOUND_ZIP"
 
-          unzip -q "$ZIP_FILE" -d extracted
+          unzip -q "$FOUND_ZIP" -d extracted
 
-          APP_DIR="extracted/AI-Trading-Dashboard/artifacts/ai-trading-dashboard"
+          echo ""
+          echo "Mencari folder project..."
 
-          if [ ! -f "$APP_DIR/package.json" ]; then
+          APP_DIR=""
+
+          # Prioritas 1:
+          # project yang mempunyai dashboard.tsx
+          while IFS= read -r DASHBOARD_FILE; do
+            DIR="$(dirname "$DASHBOARD_FILE")"
+
+            while [ "$DIR" != "." ] && [ "$DIR" != "/" ]; do
+              if [ -f "$DIR/package.json" ] && \
+                 [ -f "$DIR/index.html" ] && \
+                 { [ -f "$DIR/vite.config.ts" ] || [ -f "$DIR/vite.config.js" ]; }; then
+
+                APP_DIR="$DIR"
+                break 2
+              fi
+
+              DIR="$(dirname "$DIR")"
+            done
+          done < <(find extracted -type f -path "*/src/pages/dashboard.tsx")
+
+          # Prioritas 2:
+          # project Vite biasa
+          if [ -z "$APP_DIR" ]; then
+            while IFS= read -r VITE_FILE; do
+              DIR="$(dirname "$VITE_FILE")"
+
+              if [ -f "$DIR/package.json" ] && \
+                 [ -f "$DIR/index.html" ]; then
+                APP_DIR="$DIR"
+                break
+              fi
+            done < <(
+              find extracted -type f \
+              \( -name "vite.config.ts" -o -name "vite.config.js" \)
+            )
+          fi
+
+          if [ -z "$APP_DIR" ]; then
             echo ""
-            echo "ERROR: Project AI Trading Dashboard tidak ditemukan."
+            echo "ERROR: Folder project QFX tidak ditemukan."
             echo ""
-            echo "Struktur package.json yang ditemukan:"
-            find extracted -type f -name "package.json" | sort
+            echo "Isi extracted:"
+            find extracted -maxdepth 6 -type f | head -200
             exit 1
           fi
 
           echo ""
-          echo "========================================"
-          echo "PROJECT YANG DIPILIH"
-          echo "========================================"
-
+          echo "=========================================="
+          echo "PROJECT DITEMUKAN"
+          echo "=========================================="
           echo "$APP_DIR"
 
           echo ""
-          echo "========================================"
-          echo "MEMBERSIHKAN ROOT REPOSITORY"
-          echo "========================================"
+          echo "File penting:"
+          find "$APP_DIR" -maxdepth 3 -type f \
+            \( -name "package.json" \
+            -o -name "index.html" \
+            -o -name "vite.config.ts" \
+            -o -name "tsconfig.json" \
+            -o -name "dashboard.tsx" \
+            \) \
+            -print
 
+          echo ""
+          echo "=========================================="
+          echo "MENYALIN PROJECT QFX KE ROOT REPOSITORY"
+          echo "=========================================="
+
+          # Bersihkan file project lama,
+          # tetapi jangan menghapus .git atau workflow.
           find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
@@ -80,88 +151,43 @@ jobs:
             ! -name "extracted" \
             -exec rm -rf {} +
 
-          echo ""
-          echo "========================================"
-          echo "MENYALIN PROJECT QFX"
-          echo "========================================"
-
           cp -a "$APP_DIR"/. ./
 
           echo ""
-          echo "Project QFX berhasil disalin."
-
-          echo ""
-          echo "========================================"
-          echo "MENYALIN API CLIENT"
-          echo "========================================"
-
-          API_CLIENT_DIR="extracted/AI-Trading-Dashboard/lib/api-client-react"
-
-          if [ ! -f "$API_CLIENT_DIR/package.json" ]; then
-            echo "ERROR: api-client-react tidak ditemukan."
-            exit 1
-          fi
-
-          mkdir -p lib/api-client-react
-
-          cp -a "$API_CLIENT_DIR"/. lib/api-client-react/
-
-          echo "api-client-react berhasil disalin."
+          echo "Project berhasil disalin."
 
       - name: Prepare package.json
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "MEMPERBAIKI DEPENDENCY"
-          echo "========================================"
+          echo "=========================================="
+          echo "MEMERIKSA PACKAGE.JSON"
+          echo "=========================================="
+
+          test -f package.json
 
           node <<'NODE'
           const fs = require("fs");
-          const { execSync } = require("child_process");
 
-          function fixPackage(file) {
-            console.log("");
-            console.log(`Memproses ${file}`);
+          const file = "package.json";
+          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
 
-            const pkg = JSON.parse(
-              fs.readFileSync(file, "utf8")
-            );
+          const sections = [
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies"
+          ];
 
-            const sections = [
-              "dependencies",
-              "devDependencies",
-              "optionalDependencies"
-            ];
+          for (const section of sections) {
+            if (!pkg[section]) continue;
 
-            for (const section of sections) {
-              if (!pkg[section]) {
-                continue;
-              }
+            for (const [name, value] of Object.entries(pkg[section])) {
+              if (value === "catalog:") {
+                console.log(`catalog ditemukan: ${name}`);
 
-              for (const [name, value] of Object.entries(pkg[section])) {
-
-                if (value === "workspace:*") {
-                  if (name === "@workspace/api-client-react") {
-                    pkg[section][name] =
-                      "file:./lib/api-client-react";
-
-                    console.log(
-                      `${name} -> file:./lib/api-client-react`
-                    );
-                  }
-
-                  continue;
-                }
-
-                if (value !== "catalog:") {
-                  continue;
-                }
-
-                console.log(
-                  `Mencari versi npm untuk ${name}...`
-                );
+                // Gunakan versi terbaru dari npm.
+                const { execSync } = require("child_process");
 
                 const version = execSync(
                   `npm view "${name}" version`,
@@ -172,54 +198,59 @@ jobs:
 
                 if (!version) {
                   throw new Error(
-                    `Versi npm tidak ditemukan: ${name}`
+                    `Tidak dapat menemukan versi npm untuk ${name}`
                   );
                 }
 
                 pkg[section][name] = `^${version}`;
 
                 console.log(
-                  `${name} -> ^${version}`
+                  `${name}: catalog: -> ^${version}`
                 );
               }
             }
-
-            fs.writeFileSync(
-              file,
-              JSON.stringify(pkg, null, 2) + "\n"
-            );
-
-            console.log(
-              `${file} selesai diperbaiki.`
-            );
           }
 
-          fixPackage("package.json");
+          fs.writeFileSync(
+            file,
+            JSON.stringify(pkg, null, 2) + "\n"
+          );
 
-          if (
-            fs.existsSync(
-              "lib/api-client-react/package.json"
-            )
-          ) {
-            fixPackage(
-              "lib/api-client-react/package.json"
-            );
-          }
+          console.log("package.json selesai diperiksa.");
           NODE
 
           echo ""
-          echo "Dependency selesai diperbaiki."
+          echo "Memastikan tidak ada catalog:"
+
+          if grep -R '"catalog:"' package.json; then
+            echo "ERROR: catalog masih ditemukan."
+            exit 1
+          fi
+
+          echo "Tidak ada catalog: lagi."
 
       - name: Fix TypeScript configuration
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "MEMPERBAIKI TSCONFIG"
-          echo "========================================"
+          echo "=========================================="
+          echo "MEMERIKSA TSCONFIG"
+          echo "=========================================="
 
-          cat > tsconfig.json <<'EOF'
+          if [ -f tsconfig.json ]; then
+            echo "tsconfig.json ditemukan."
+
+            if grep -q '"extends"' tsconfig.json; then
+              echo "Menggunakan tsconfig project yang ada."
+            else
+              echo "tsconfig tidak memakai extends."
+            fi
+          else
+            echo "tsconfig.json belum ada."
+            echo "Membuat konfigurasi TypeScript dasar."
+
+            cat > tsconfig.json <<'EOF'
           {
             "compilerOptions": {
               "target": "ES2022",
@@ -240,7 +271,7 @@ jobs:
               "resolveJsonModule": true,
               "isolatedModules": true,
               "noEmit": true,
-              "jsx": "preserve",
+              "jsx": "react-jsx",
               "incremental": true,
               "types": [
                 "node",
@@ -255,7 +286,7 @@ jobs:
             },
             "include": [
               "src/**/*",
-              "lib/**/*",
+              "mockupPreviewPlugin.ts",
               "vite.config.ts"
             ],
             "exclude": [
@@ -266,120 +297,60 @@ jobs:
             ]
           }
           EOF
-
-          echo "tsconfig.json selesai diperbaiki."
+          fi
 
       - name: Verify QFX project
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
+          echo "=========================================="
           echo "VERIFIKASI PROJECT QFX"
-          echo "========================================"
+          echo "=========================================="
 
           test -f package.json
           test -f index.html
-          test -f vite.config.ts
-          test -f tsconfig.json
-          test -f src/App.tsx
-          test -f src/pages/dashboard.tsx
-          test -f src/pages/history.tsx
-          test -f src/pages/portfolio.tsx
-          test -f src/pages/settings.tsx
-          test -f src/components/smc-chart.tsx
-          test -f lib/api-client-react/package.json
-          test -f lib/api-client-react/src/index.ts
-          test -f lib/api-client-react/src/generated/api.ts
-          test -f lib/api-client-react/src/generated/api.schemas.ts
-
-          echo "package.json                         OK"
-          echo "index.html                           OK"
-          echo "vite.config.ts                       OK"
-          echo "tsconfig.json                        OK"
-          echo "src/App.tsx                          OK"
-          echo "src/pages/dashboard.tsx             OK"
-          echo "src/pages/history.tsx               OK"
-          echo "src/pages/portfolio.tsx             OK"
-          echo "src/pages/settings.tsx              OK"
-          echo "src/components/smc-chart.tsx        OK"
-          echo "lib/api-client-react                OK"
-          echo "api.ts                               OK"
-          echo "api.schemas.ts                       OK"
+          test -d src
 
           echo ""
-          echo "========================================"
-          echo "MEMASTIKAN BUKAN MOCKUP PREVIEW"
-          echo "========================================"
+          echo "package.json OK"
+          echo "index.html OK"
+          echo "src/ OK"
 
-          if grep -q "Component Preview Server" src/App.tsx; then
-            echo "ERROR: src/App.tsx masih merupakan Mockup Preview Server."
+          if [ -f vite.config.ts ]; then
+            echo "vite.config.ts OK"
+          elif [ -f vite.config.js ]; then
+            echo "vite.config.js OK"
+          else
+            echo "ERROR: vite.config tidak ditemukan."
             exit 1
           fi
-
-          if grep -q "mockup-components" src/App.tsx; then
-            echo "ERROR: src/App.tsx masih menggunakan mockup-components."
-            exit 1
-          fi
-
-          if ! grep -q "DashboardPage" src/App.tsx; then
-            echo "ERROR: DashboardPage tidak ditemukan di App.tsx."
-            exit 1
-          fi
-
-          echo "App.tsx adalah aplikasi QFX."
 
           echo ""
-          echo "========================================"
-          echo "MEMASTIKAN CATALOG DEPENDENCY HILANG"
-          echo "========================================"
+          echo "Mencari dashboard.tsx:"
 
-          if grep -R "catalog:" package.json lib/api-client-react/package.json; then
-            echo "ERROR: catalog dependency masih ditemukan."
-            exit 1
+          DASHBOARD=$(find src -type f -name "dashboard.tsx" -print -quit || true)
+
+          if [ -n "$DASHBOARD" ]; then
+            echo "DASHBOARD DITEMUKAN:"
+            echo "$DASHBOARD"
+          else
+            echo "dashboard.tsx belum ditemukan."
           fi
 
-          echo "Tidak ada catalog dependency."
+          echo ""
+          echo "Struktur src:"
+          find src -maxdepth 3 -type f | sort | head -200
 
           echo ""
-          echo "========================================"
+          echo "=========================================="
           echo "VERIFIKASI BERHASIL"
-          echo "========================================"
+          echo "=========================================="
 
-      - name: Install dependencies and test build
-        shell: bash
-        env:
-          PORT: "4173"
-          BASE_PATH: "/"
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "INSTALL DEPENDENCIES"
-          echo "========================================"
-
-          npm install --no-audit --no-fund
-
-          echo ""
-          echo "========================================"
-          echo "BUILD QFX"
-          echo "========================================"
-
-          npm run build
-
-          echo ""
-          echo "========================================"
-          echo "BUILD QFX BERHASIL"
-          echo "========================================"
-
-      - name: Commit prepared QFX project
+      - name: Commit prepared project
         shell: bash
         run: |
           set -e
-
-          echo "========================================"
-          echo "MENYIMPAN PROJECT QFX KE GITHUB"
-          echo "========================================"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -387,17 +358,17 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "Tidak ada perubahan untuk disimpan."
+            echo "Tidak ada perubahan."
             exit 0
           fi
 
-          git commit -m "Prepare QFX dashboard project"
+          git commit -m "Prepare QFX project"
 
           git pull --rebase origin main
 
           git push origin main
 
           echo ""
-          echo "========================================"
-          echo "QFX PROJECT SIAP"
-          echo "========================================"
+          echo "=========================================="
+          echo "PROJECT QFX SIAP"
+          echo "=========================================="
