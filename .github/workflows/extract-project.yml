@@ -94,8 +94,9 @@ jobs:
 
           echo ""
           echo "PROJECT BERHASIL DI-EXTRACT."
+
           echo ""
-          echo "Daftar file project:"
+          echo "DAFTAR FILE PROJECT:"
 
           find extracted \
             -maxdepth 5 \
@@ -116,6 +117,7 @@ jobs:
           APP_DIR=""
 
           while IFS= read -r PKG; do
+
             DIR="$(dirname "$PKG")"
 
             echo ""
@@ -139,7 +141,8 @@ jobs:
               continue
             fi
 
-            if grep -R -q "@workspace/api-client-react" \
+            if grep -R -q \
+              "@workspace/api-client-react" \
               "$DIR/src" \
               "$DIR/package.json" \
               2>/dev/null; then
@@ -150,6 +153,7 @@ jobs:
               echo "=========================================="
               echo "QFX ASLI DITEMUKAN"
               echo "=========================================="
+
               echo "$APP_DIR"
 
               break
@@ -166,7 +170,7 @@ jobs:
           if [ -z "$APP_DIR" ]; then
 
             echo ""
-            echo "Pencarian kedua berdasarkan dashboard.tsx..."
+            echo "PENCARIAN KEDUA BERDASARKAN dashboard.tsx..."
 
             while IFS= read -r DASHBOARD; do
 
@@ -180,6 +184,7 @@ jobs:
                    [ -f "$DIR/src/App.tsx" ]; then
 
                   APP_DIR="$DIR"
+
                   break 2
                 fi
 
@@ -227,7 +232,9 @@ jobs:
           fi
 
           echo ""
-          echo "APP_DIR=$APP_DIR"
+          echo "APP_DIR:"
+          echo "$APP_DIR"
+
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
       - name: Verify selected QFX project
@@ -334,7 +341,7 @@ jobs:
           cp -a "$APP_DIR"/. ./
 
           echo ""
-          echo "Project QFX sudah disalin ke root."
+          echo "PROJECT QFX SUDAH DISALIN KE ROOT."
 
       - name: Ensure API client package
         shell: bash
@@ -447,13 +454,69 @@ jobs:
           console.log("package.json selesai.");
           NODE
 
-          if grep -R '"catalog:"' package.json; then
+          echo ""
+          echo "MEMERIKSA catalog: DI PACKAGE.JSON"
+
+          if grep -R \
+            '"catalog:"' \
+            package.json; then
 
             echo ""
-            echo "ERROR: catalog masih ditemukan."
-            exit 1
+            echo "ERROR: catalog: masih ditemukan di package.json."
 
+            exit 1
           fi
+
+          echo "Tidak ada catalog: di package.json."
+
+      - name: Remove incompatible lockfiles
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "MEMBERSIHKAN LOCKFILE LAMA"
+          echo "=========================================="
+
+          rm -f package-lock.json
+          rm -f npm-shrinkwrap.json
+
+          echo ""
+          echo "package-lock.json lama DIHAPUS."
+
+          echo "npm-shrinkwrap.json lama DIHAPUS jika ada."
+
+          echo ""
+          echo "Lockfile baru akan dibuat oleh npm."
+
+      - name: Verify no catalog protocol remains
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "MEMERIKSA catalog:"
+          echo "=========================================="
+
+          if grep -R \
+            "catalog:" \
+            . \
+            --include="package.json" \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist \
+            --exclude-dir=extracted \
+            2>/dev/null; then
+
+            echo ""
+            echo "ERROR: catalog: masih ditemukan."
+            echo "Periksa package.json."
+
+            exit 1
+          fi
+
+          echo ""
+          echo "AMAN: tidak ada catalog: pada package.json."
 
       - name: Fix TypeScript configuration
         shell: bash
@@ -538,12 +601,19 @@ jobs:
           test -f src/pages/dashboard.tsx
 
           if [ -f vite.config.ts ]; then
+
             echo "vite.config.ts ditemukan."
+
           elif [ -f vite.config.js ]; then
+
             echo "vite.config.js ditemukan."
+
           else
+
             echo "ERROR: vite.config tidak ditemukan."
+
             exit 1
+
           fi
 
           if grep -q \
