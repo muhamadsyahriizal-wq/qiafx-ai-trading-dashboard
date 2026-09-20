@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
 
       - name: Extract QFX dashboard
         shell: bash
@@ -27,7 +30,7 @@ jobs:
           echo "MENCARI AI TRADING DASHBOARD"
           echo "=========================================="
 
-          rm -rf extracted
+          rm -rf extracted testzip
           mkdir -p extracted
 
           FOUND_ZIP=""
@@ -43,7 +46,6 @@ jobs:
 
             unzip -q "$ZIP" -d testzip
 
-            # Cari project yang mempunyai file Vite
             CANDIDATE=$(find testzip \
               -type f \
               \( -name "vite.config.ts" -o -name "vite.config.js" \) \
@@ -72,12 +74,26 @@ jobs:
           unzip -q "$FOUND_ZIP" -d extracted
 
           echo ""
+          echo "Menghapus metadata Git/submodule dari hasil ZIP..."
+
+          find extracted \
+            -type d \
+            -name ".git" \
+            -prune \
+            -exec rm -rf {} +
+
+          find extracted \
+            -type f \
+            -name ".gitmodules" \
+            -delete
+
+          echo "Metadata Git/submodule dari ZIP dibersihkan."
+
+          echo ""
           echo "Mencari folder project..."
 
           APP_DIR=""
 
-          # Prioritas 1:
-          # project yang mempunyai dashboard.tsx
           while IFS= read -r DASHBOARD_FILE; do
             DIR="$(dirname "$DASHBOARD_FILE")"
 
@@ -94,8 +110,6 @@ jobs:
             done
           done < <(find extracted -type f -path "*/src/pages/dashboard.tsx")
 
-          # Prioritas 2:
-          # project Vite biasa
           if [ -z "$APP_DIR" ]; then
             while IFS= read -r VITE_FILE; do
               DIR="$(dirname "$VITE_FILE")"
@@ -142,8 +156,6 @@ jobs:
           echo "MENYALIN PROJECT QFX KE ROOT REPOSITORY"
           echo "=========================================="
 
-          # Bersihkan file project lama,
-          # tetapi jangan menghapus .git atau workflow.
           find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
@@ -155,6 +167,33 @@ jobs:
 
           echo ""
           echo "Project berhasil disalin."
+
+          echo ""
+          echo "Membersihkan sisa metadata Git..."
+
+          find . \
+            -mindepth 2 \
+            -type d \
+            -name ".git" \
+            -prune \
+            -exec rm -rf {} +
+
+          find . \
+            -mindepth 2 \
+            -type f \
+            -name ".gitmodules" \
+            -delete
+
+          echo ""
+          echo "Menghapus folder hasil ekstraksi agar tidak menjadi submodule..."
+
+          rm -rf extracted
+          rm -rf testzip
+
+          echo ""
+          echo "=========================================="
+          echo "PEMBERSIHAN SELESAI"
+          echo "=========================================="
 
       - name: Prepare package.json
         shell: bash
@@ -186,7 +225,6 @@ jobs:
               if (value === "catalog:") {
                 console.log(`catalog ditemukan: ${name}`);
 
-                // Gunakan versi terbaru dari npm.
                 const { execSync } = require("child_process");
 
                 const version = execSync(
@@ -299,6 +337,35 @@ jobs:
           EOF
           fi
 
+      - name: Verify no submodule artifacts
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "MEMERIKSA SUBMODULE"
+          echo "=========================================="
+
+          if [ -f ".gitmodules" ]; then
+            echo "ERROR: .gitmodules masih ada di root."
+            exit 1
+          fi
+
+          NESTED_GIT=$(find . \
+            -mindepth 2 \
+            -type d \
+            -name ".git" \
+            -print -quit || true)
+
+          if [ -n "$NESTED_GIT" ]; then
+            echo "ERROR: Nested Git repository ditemukan:"
+            echo "$NESTED_GIT"
+            exit 1
+          fi
+
+          echo "Tidak ada metadata submodule."
+          echo "Submodule check OK."
+
       - name: Verify QFX project
         shell: bash
         run: |
@@ -329,7 +396,10 @@ jobs:
           echo ""
           echo "Mencari dashboard.tsx:"
 
-          DASHBOARD=$(find src -type f -name "dashboard.tsx" -print -quit || true)
+          DASHBOARD=$(find src \
+            -type f \
+            -name "dashboard.tsx" \
+            -print -quit || true)
 
           if [ -n "$DASHBOARD" ]; then
             echo "DASHBOARD DITEMUKAN:"
@@ -347,6 +417,27 @@ jobs:
           echo "VERIFIKASI BERHASIL"
           echo "=========================================="
 
+      - name: Install dependencies and test build
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "INSTALL DEPENDENCIES"
+          echo "=========================================="
+
+          npm install
+
+          echo ""
+          echo "=========================================="
+          echo "TEST BUILD"
+          echo "=========================================="
+
+          npm run build
+
+          echo ""
+          echo "BUILD BERHASIL."
+
       - name: Commit prepared project
         shell: bash
         run: |
@@ -355,6 +446,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          echo "=========================================="
+          echo "MEMERIKSA STATUS GIT"
+          echo "=========================================="
+
+          git status --short
+
+          echo ""
+          echo "Menambahkan perubahan..."
+
           git add -A
 
           if git diff --cached --quiet; then
@@ -362,9 +462,13 @@ jobs:
             exit 0
           fi
 
+          echo ""
+          echo "Commit project..."
+
           git commit -m "Prepare QFX project"
 
-          git pull --rebase origin main
+          echo ""
+          echo "Push ke main..."
 
           git push origin main
 
