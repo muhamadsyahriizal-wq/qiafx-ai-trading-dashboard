@@ -15,63 +15,119 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find actual QFX app
+      - name: Find and extract actual QFX app
         shell: bash
         run: |
           set -e
 
-          rm -rf extracted testzip
-          mkdir extracted testzip
+          echo "======================================"
+          echo "MENCARI PROJECT QFX"
+          echo "======================================"
 
-          FOUND=""
+          rm -rf extracted testzip
+          mkdir -p extracted testzip
+
+          FOUND_ZIP=""
+          FOUND_APP=""
 
           for ZIP in *.zip; do
             [ -f "$ZIP" ] || continue
 
-            echo "Memeriksa $ZIP"
+            echo ""
+            echo "Memeriksa ZIP: $ZIP"
+
             rm -rf testzip
-            mkdir testzip
+            mkdir -p testzip
 
-            unzip -q "$ZIP" -d testzip
+            if ! unzip -q "$ZIP" -d testzip; then
+              echo "ZIP tidak valid, dilewati: $ZIP"
+              continue
+            fi
 
-            CANDIDATE=$(find testzip -type f -name "vite.config.ts" -printf '%h\n' | while read DIR; do
+            echo "Mencari vite.config.ts + index.html + package.json..."
+
+            CANDIDATE=""
+
+            while IFS= read -r VITE_FILE; do
+              DIR="$(dirname "$VITE_FILE")"
+
               if [ -f "$DIR/index.html" ] && [ -f "$DIR/package.json" ]; then
-                echo "$DIR"
+                CANDIDATE="$DIR"
                 break
               fi
-            done | head -n 1)
+            done < <(find testzip -type f -name "vite.config.ts")
 
             if [ -n "$CANDIDATE" ]; then
-              FOUND="$ZIP"
-              APP_DIR="$CANDIDATE"
-              echo "APP DITEMUKAN: $ZIP"
-              echo "FOLDER: $APP_DIR"
+              FOUND_ZIP="$ZIP"
+              FOUND_APP="$CANDIDATE"
+
+              echo ""
+              echo "======================================"
+              echo "PROJECT QFX DITEMUKAN"
+              echo "ZIP  : $FOUND_ZIP"
+              echo "FOLDER: $FOUND_APP"
+              echo "======================================"
+
               break
             fi
           done
 
-          if [ -z "$FOUND" ]; then
-            echo "ERROR: Aplikasi Vite QFX tidak ditemukan."
-            echo "ZIP yang tersedia:"
+          if [ -z "$FOUND_ZIP" ]; then
+            echo ""
+            echo "======================================"
+            echo "ERROR: PROJECT QFX TIDAK DITEMUKAN"
+            echo "======================================"
+
+            echo "Daftar ZIP:"
             ls -lh *.zip 2>/dev/null || true
+
+            echo ""
+            echo "Isi file yang ditemukan:"
+            find testzip -maxdepth 5 -type f | head -100 || true
+
             exit 1
           fi
 
-          rm -rf extracted
-          mkdir extracted
-          unzip -q "$FOUND" -d extracted
+          echo ""
+          echo "Mengekstrak project dari:"
+          echo "$FOUND_ZIP"
 
-          APP_DIR=$(find extracted -type f -name "vite.config.ts" -printf '%h\n' | while read DIR; do
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -q "$FOUND_ZIP" -d extracted
+
+          APP_DIR=""
+
+          while IFS= read -r VITE_FILE; do
+            DIR="$(dirname "$VITE_FILE")"
+
             if [ -f "$DIR/index.html" ] && [ -f "$DIR/package.json" ]; then
-              echo "$DIR"
+              APP_DIR="$DIR"
               break
             fi
-          done | head -n 1)
+          done < <(find extracted -type f -name "vite.config.ts")
 
-          echo "Mengambil project dari: $APP_DIR"
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: Folder aplikasi tidak ditemukan setelah ekstraksi."
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "FOLDER APLIKASI:"
+          echo "$APP_DIR"
+          echo "======================================"
+
+          echo ""
+          echo "Isi project:"
+          ls -la "$APP_DIR"
+
+          echo ""
+          echo "Membersihkan root repository..."
 
           find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
@@ -79,13 +135,63 @@ jobs:
             ! -name "*.zip" \
             -exec rm -rf {} +
 
+          echo ""
+          echo "Menyalin project QFX..."
+
           cp -a "$APP_DIR"/. ./
+
+          echo ""
+          echo "Memastikan file utama tersedia..."
+
+          test -f package.json
+          test -f index.html
+          test -f vite.config.ts
+          test -d src
+
+          echo ""
+          echo "======================================"
+          echo "PROJECT QFX BERHASIL DIEKSTRAK"
+          echo "======================================"
+
+          echo ""
+          echo "Root project:"
+          ls -la
 
           rm -rf extracted testzip
 
-          echo "Project QFX berhasil diekstrak."
+      - name: Verify project
+        shell: bash
+        run: |
+          set -e
 
-      - name: Commit
+          echo "Memeriksa project..."
+
+          if [ ! -f package.json ]; then
+            echo "ERROR: package.json tidak ada."
+            exit 1
+          fi
+
+          if [ ! -f vite.config.ts ]; then
+            echo "ERROR: vite.config.ts tidak ada."
+            exit 1
+          fi
+
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html tidak ada."
+            exit 1
+          fi
+
+          if [ ! -d src ]; then
+            echo "ERROR: folder src tidak ada."
+            exit 1
+          fi
+
+          echo "Semua file utama ditemukan."
+          echo ""
+          echo "package.json:"
+          head -40 package.json
+
+      - name: Commit extracted project
         shell: bash
         run: |
           set -e
@@ -101,5 +207,12 @@ jobs:
           fi
 
           git commit -m "Fix QFX project root"
+
           git pull --rebase origin main
+
           git push origin main
+
+          echo ""
+          echo "======================================"
+          echo "SELESAI"
+          echo "======================================"
