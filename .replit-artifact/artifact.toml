@@ -1,17 +1,28 @@
-kind = "design"
-previewPath = "/__mockup"
-title = "Canvas"
+kind = "web"
+previewPath = "/"
+title = "AI Trading Dashboard"
+description = "A Telegram Mini App for BTC/USDT market intelligence, AI trading signals, and safe paper trading with portfolio and trade history tracking."
 version = "1.0.0"
-id = "XegfDyZt7HqfW2Bb8Ghoy"
+id = "artifacts/ai-trading-dashboard"
+router = "path"
 
 [[services]]
-localPort = 8081
-name = "Component Preview Server"
-paths = ["/__mockup"]
-
-[services.env]
-PORT = "8081"
-BASE_PATH = "/__mockup"
+name = "web"
+paths = [ "/" ]
+localPort = 22434
 
 [services.development]
-run = "pnpm --filter @workspace/mockup-sandbox run dev"
+run = "pnpm --filter @workspace/ai-trading-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ai-trading-dashboard", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/ai-trading-dashboard/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22434"
+BASE_PATH = "/"
