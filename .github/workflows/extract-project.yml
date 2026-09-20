@@ -157,7 +157,7 @@ jobs:
           echo "Nested Git cleanup finished."
 
       # =========================================================
-      # 6. INSPECT PROJECT
+      # 6. INSPECT EXTRACTED PROJECT
       # =========================================================
       - name: Inspect extracted project
         shell: bash
@@ -165,7 +165,9 @@ jobs:
           set -u
 
           echo ""
+          echo "======================================"
           echo "EXTRACTED DIRECTORIES"
+          echo "======================================"
 
           find extracted \
             -maxdepth 5 \
@@ -174,7 +176,9 @@ jobs:
             | head -300
 
           echo ""
+          echo "======================================"
           echo "PROJECT FILES"
+          echo "======================================"
 
           find extracted \
             -maxdepth 7 \
@@ -215,11 +219,24 @@ jobs:
 
           if [ -z "$APP_DIR" ]; then
 
+            echo ""
             echo "ERROR: Vite application was not found."
+
+            echo ""
+            echo "vite.config.ts files:"
 
             find extracted \
               -type f \
               -name "vite.config.ts" \
+              -print
+
+            echo ""
+            echo "package.json files:"
+
+            find extracted \
+              -type f \
+              -name "package.json" \
+              -not -path "*/node_modules/*" \
               -print
 
             exit 1
@@ -227,7 +244,9 @@ jobs:
           fi
 
           echo ""
-          echo "APPLICATION FOUND:"
+          echo "======================================"
+          echo "APPLICATION FOUND"
+          echo "======================================"
           echo "$APP_DIR"
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
@@ -241,6 +260,9 @@ jobs:
           set -u
 
           API_PACKAGE_DIR=""
+
+          echo ""
+          echo "Searching for @workspace/api-client-react..."
 
           while IFS= read -r -d '' PACKAGE_FILE; do
 
@@ -262,8 +284,10 @@ jobs:
             )"
 
             if [ "$NAME" = "@workspace/api-client-react" ]; then
+
               API_PACKAGE_DIR="$(dirname "$PACKAGE_FILE")"
               break
+
             fi
 
           done < <(
@@ -277,7 +301,9 @@ jobs:
           if [ -z "$API_PACKAGE_DIR" ]; then
 
             echo ""
-            echo "ERROR: @workspace/api-client-react was not found."
+            echo "======================================"
+            echo "ERROR: API CLIENT NOT FOUND"
+            echo "======================================"
 
             find extracted \
               -type f \
@@ -286,10 +312,13 @@ jobs:
               -print
 
             exit 1
+
           fi
 
           echo ""
-          echo "API CLIENT FOUND:"
+          echo "======================================"
+          echo "API CLIENT FOUND"
+          echo "======================================"
           echo "$API_PACKAGE_DIR"
 
           echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
@@ -309,7 +338,13 @@ jobs:
             "$API_PACKAGE_DIR" \
             "packages/api-client-react"
 
+          echo ""
           echo "API client prepared."
+
+          find packages/api-client-react \
+            -maxdepth 5 \
+            -type f \
+            | head -300
 
       # =========================================================
       # 10. COPY APPLICATION TO ROOT
@@ -319,29 +354,39 @@ jobs:
         run: |
           set -u
 
+          echo ""
+          echo "======================================"
+          echo "PREPARING REPOSITORY ROOT"
+          echo "======================================"
+
           mkdir -p .qfx-temp
 
-          # Save ZIP
           if [ -f "AI-Trading-Dashboard.zip" ]; then
+
             cp \
               "AI-Trading-Dashboard.zip" \
               ".qfx-temp/AI-Trading-Dashboard.zip"
+
           fi
 
-          # Save API client
           rm -rf ".qfx-temp/api-client-react"
 
           cp -R \
             "packages/api-client-react" \
             ".qfx-temp/api-client-react"
 
-          # Verify application
           test -d "$APP_DIR"
           test -f "$APP_DIR/package.json"
           test -f "$APP_DIR/index.html"
           test -f "$APP_DIR/vite.config.ts"
 
-          # Clean old root files
+          echo ""
+          echo "Application source:"
+          echo "$APP_DIR"
+
+          echo ""
+          echo "Cleaning old root files..."
+
           find . -maxdepth 1 \
             ! -name "." \
             ! -name ".git" \
@@ -352,10 +397,16 @@ jobs:
             -exec rm -rf {} + \
             2>/dev/null || true
 
-          # Copy application
-          cp -R "$APP_DIR"/. .
+          echo ""
+          echo "Copying application..."
 
-          # Restore API client
+          cp -R \
+            "$APP_DIR"/. \
+            .
+
+          echo ""
+          echo "Restoring API client..."
+
           mkdir -p packages
 
           rm -rf packages/api-client-react
@@ -364,13 +415,15 @@ jobs:
             ".qfx-temp/api-client-react" \
             "packages/api-client-react"
 
-          # Restore ZIP
           if [ -f ".qfx-temp/AI-Trading-Dashboard.zip" ]; then
+
             cp \
               ".qfx-temp/AI-Trading-Dashboard.zip" \
               "AI-Trading-Dashboard.zip"
+
           fi
 
+          echo ""
           echo "Application copied successfully."
 
       # =========================================================
@@ -380,6 +433,8 @@ jobs:
         shell: bash
         run: |
           set -u
+
+          echo "Removing nested Git metadata..."
 
           find . \
             -mindepth 2 \
@@ -399,12 +454,15 @@ jobs:
           echo "Git cleanup complete."
 
       # =========================================================
-      # 12. FIX API CLIENT DEPENDENCY
+      # 12. FIX WORKSPACE DEPENDENCY
       # =========================================================
       - name: Fix workspace dependency
         shell: bash
         run: |
           set -u
+
+          echo ""
+          echo "Fixing workspace dependencies..."
 
           node <<'NODE'
           const fs = require("fs");
@@ -423,13 +481,20 @@ jobs:
 
           for (const section of sections) {
 
-            if (!pkg[section]) continue;
+            if (!pkg[section]) {
+              continue;
+            }
 
-            if (pkg[section]["@workspace/api-client-react"]) {
+            if (
+              pkg[section]["@workspace/api-client-react"]
+            ) {
 
               pkg[section]["@workspace/api-client-react"] =
                 "file:./packages/api-client-react";
 
+              console.log(
+                "Converted @workspace/api-client-react"
+              );
             }
           }
 
@@ -439,15 +504,25 @@ jobs:
           );
           NODE
 
-          echo "API client dependency fixed."
+          echo ""
+          echo "API client dependency:"
+
+          grep -n \
+            "api-client-react" \
+            package.json || true
 
       # =========================================================
-      # 13. REMOVE CATALOG DEPENDENCIES
+      # 13. RESOLVE ALL CATALOG DEPENDENCIES
       # =========================================================
-      - name: Resolve catalog dependencies
+      - name: Resolve all catalog dependencies
         shell: bash
         run: |
           set -u
+
+          echo ""
+          echo "======================================"
+          echo "RESOLVING CATALOG DEPENDENCIES"
+          echo "======================================"
 
           node <<'NODE'
           const fs = require("fs");
@@ -457,7 +532,9 @@ jobs:
 
           function scan(dir) {
 
-            if (!fs.existsSync(dir)) return;
+            if (!fs.existsSync(dir)) {
+              return;
+            }
 
             for (const entry of fs.readdirSync(dir, {
               withFileTypes: true
@@ -489,7 +566,6 @@ jobs:
           }
 
           scan(".");
-          scan("packages");
 
           const files = [
             ...new Set(packageFiles)
@@ -513,14 +589,18 @@ jobs:
               );
 
             } catch {
+
               continue;
+
             }
 
             let changed = false;
 
             for (const section of sections) {
 
-              if (!pkg[section]) continue;
+              if (!pkg[section]) {
+                continue;
+              }
 
               for (
                 const [name, value]
@@ -552,10 +632,13 @@ jobs:
 
             }
           }
+
+          console.log("");
+          console.log("Catalog dependency cleanup finished.");
           NODE
 
           echo ""
-          echo "Checking for catalog dependencies..."
+          echo "Checking for remaining catalog references..."
 
           if grep -R \
             "catalog:" \
@@ -563,17 +646,24 @@ jobs:
             packages/*/package.json \
             2>/dev/null; then
 
-            echo "ERROR: catalog dependency remains."
+            echo ""
+            echo "ERROR: catalog dependency still exists."
+
             exit 1
+
+          else
+
+            echo ""
+            echo "SUCCESS: no catalog dependencies remain."
 
           fi
 
-          echo "No catalog dependencies remain."
-
       # =========================================================
-      # 14. CREATE STANDALONE TYPESCRIPT CONFIG
+      # 14. CREATE STANDALONE TYPESCRIPT CONFIGURATION
       #
-      # THIS FIXES THE REPLIT tsconfig.base.json ERROR
+      # IMPORTANT:
+      # NO "baseUrl"
+      # because newer TypeScript removed that option.
       # =========================================================
       - name: Create standalone TypeScript configuration
         shell: bash
@@ -609,7 +699,6 @@ jobs:
                 "node",
                 "vite/client"
               ],
-              "baseUrl": ".",
               "paths": {
                 "@/*": [
                   "./src/*"
@@ -635,11 +724,12 @@ jobs:
           EOF
 
           echo ""
-          echo "New standalone tsconfig.json:"
+          echo "Standalone tsconfig.json created."
+
           cat tsconfig.json
 
       # =========================================================
-      # 15. FIX PACKAGE TYPECHECK SCRIPT
+      # 15. FIX TYPECHECK SCRIPT
       # =========================================================
       - name: Fix typecheck script
         shell: bash
@@ -671,7 +761,7 @@ jobs:
           echo "Typecheck script fixed."
 
       # =========================================================
-      # 16. VERIFY PROJECT
+      # 16. VERIFY PROJECT STRUCTURE
       # =========================================================
       - name: Verify project structure
         shell: bash
@@ -768,6 +858,8 @@ jobs:
           echo "FINAL QFX PROJECT"
           echo "======================================"
 
+          echo ""
+          echo "Root:"
           ls -la
 
           echo ""
@@ -782,7 +874,7 @@ jobs:
           echo "QFX project verification complete."
 
       # =========================================================
-      # 22. COMMIT
+      # 22. COMMIT PREPARED PROJECT
       # =========================================================
       - name: Commit prepared project
         shell: bash
