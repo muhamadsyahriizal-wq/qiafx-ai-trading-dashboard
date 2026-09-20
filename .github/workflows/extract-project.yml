@@ -1,4 +1,4 @@
-name: Extract QFX Project
+name: Prepare QFX Project
 
 on:
   push:
@@ -11,14 +11,14 @@ permissions:
   contents: write
 
 jobs:
-  extract:
+  prepare:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract actual QFX app
+      - name: Find and extract QFX application
         shell: bash
         run: |
           set -e
@@ -37,63 +37,40 @@ jobs:
             [ -f "$ZIP" ] || continue
 
             echo ""
-            echo "Memeriksa ZIP: $ZIP"
+            echo "Memeriksa: $ZIP"
 
             rm -rf testzip
             mkdir -p testzip
 
             if ! unzip -q "$ZIP" -d testzip; then
-              echo "ZIP tidak valid, dilewati: $ZIP"
+              echo "ZIP tidak valid, dilewati."
               continue
             fi
-
-            echo "Mencari vite.config.ts + index.html + package.json..."
-
-            CANDIDATE=""
 
             while IFS= read -r VITE_FILE; do
               DIR="$(dirname "$VITE_FILE")"
 
               if [ -f "$DIR/index.html" ] && [ -f "$DIR/package.json" ]; then
-                CANDIDATE="$DIR"
+                FOUND_ZIP="$ZIP"
+                FOUND_APP="$DIR"
                 break
               fi
             done < <(find testzip -type f -name "vite.config.ts")
 
-            if [ -n "$CANDIDATE" ]; then
-              FOUND_ZIP="$ZIP"
-              FOUND_APP="$CANDIDATE"
-
-              echo ""
-              echo "======================================"
-              echo "PROJECT QFX DITEMUKAN"
-              echo "ZIP   : $FOUND_ZIP"
-              echo "FOLDER: $FOUND_APP"
-              echo "======================================"
-
+            if [ -n "$FOUND_APP" ]; then
               break
             fi
           done
 
-          if [ -z "$FOUND_ZIP" ]; then
-            echo ""
-            echo "======================================"
-            echo "ERROR: PROJECT QFX TIDAK DITEMUKAN"
-            echo "======================================"
-
-            echo "Daftar ZIP:"
-            ls -lh *.zip 2>/dev/null || true
-
-            echo ""
-            echo "Isi file yang ditemukan:"
-            find testzip -maxdepth 5 -type f | head -100 || true
-
+          if [ -z "$FOUND_APP" ]; then
+            echo "ERROR: Project QFX tidak ditemukan."
             exit 1
           fi
 
           echo ""
-          echo "Mengekstrak project dari:"
-          echo "$FOUND_ZIP"
+          echo "PROJECT DITEMUKAN:"
+          echo "ZIP   : $FOUND_ZIP"
+          echo "FOLDER: $FOUND_APP"
 
           rm -rf extracted
           mkdir -p extracted
@@ -112,19 +89,13 @@ jobs:
           done < <(find extracted -type f -name "vite.config.ts")
 
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: Folder aplikasi tidak ditemukan setelah ekstraksi."
+            echo "ERROR: Folder aplikasi tidak ditemukan."
             exit 1
           fi
 
           echo ""
-          echo "======================================"
-          echo "FOLDER APLIKASI:"
+          echo "APP DIR:"
           echo "$APP_DIR"
-          echo "======================================"
-
-          echo ""
-          echo "Isi project:"
-          ls -la "$APP_DIR"
 
           echo ""
           echo "Membersihkan root repository..."
@@ -138,34 +109,85 @@ jobs:
             -exec rm -rf {} +
 
           echo ""
-          echo "Menyalin project QFX ke root repository..."
+          echo "Menyalin aplikasi QFX..."
 
           cp -a "$APP_DIR"/. ./
 
-          echo ""
-          echo "Memastikan file utama tersedia..."
-
-          test -f package.json
-          test -f index.html
-          test -f vite.config.ts
-          test -d src
-
-          echo ""
-          echo "======================================"
-          echo "PROJECT QFX BERHASIL DIEKSTRAK"
-          echo "======================================"
-
-          echo ""
-          echo "File root:"
-          ls -la
-
-          echo ""
-          echo "Folder src:"
-          ls -la src
-
           rm -rf extracted testzip
 
-      - name: Verify project
+          echo ""
+          echo "Project berhasil disalin."
+
+      - name: Fix catalog dependencies
+        shell: bash
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "MEMPERBAIKI DEPENDENCY CATALOG"
+          echo "======================================"
+
+          node <<'NODE'
+          const fs = require("fs");
+          const { execSync } = require("child_process");
+
+          const file = "package.json";
+          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+
+          const sections = [
+            "dependencies",
+            "devDependencies",
+            "optionalDependencies"
+          ];
+
+          for (const section of sections) {
+            if (!pkg[section]) continue;
+
+            for (const [name, value] of Object.entries(pkg[section])) {
+              if (value !== "catalog:") continue;
+
+              console.log(`Mencari versi: ${name}`);
+
+              try {
+                const version = execSync(
+                  `npm view "${name}" version`,
+                  { encoding: "utf8" }
+                ).trim();
+
+                if (!version) {
+                  throw new Error("Versi kosong");
+                }
+
+                pkg[section][name] = `^${version}`;
+
+                console.log(`  ${name} -> ^${version}`);
+              } catch (error) {
+                console.error(`Gagal mendapatkan versi untuk ${name}`);
+                throw error;
+              }
+            }
+          }
+
+          fs.writeFileSync(
+            file,
+            JSON.stringify(pkg, null, 2) + "\n"
+          );
+
+          console.log("");
+          console.log("package.json berhasil diperbaiki.");
+          NODE
+
+          echo ""
+          echo "Memeriksa apakah catalog: masih ada..."
+
+          if grep -R '"catalog:"' package.json; then
+            echo "ERROR: Masih ada dependency catalog:"
+            exit 1
+          fi
+
+          echo "Tidak ada catalog: lagi."
+
+      - name: Verify QFX project
         shell: bash
         run: |
           set -e
@@ -174,49 +196,34 @@ jobs:
           echo "VERIFIKASI PROJECT"
           echo "======================================"
 
-          if [ ! -f package.json ]; then
-            echo "ERROR: package.json tidak ada."
-            exit 1
-          fi
+          test -f package.json
+          test -f index.html
+          test -f vite.config.ts
+          test -f tsconfig.json
+          test -d src
 
-          if [ ! -f vite.config.ts ]; then
-            echo "ERROR: vite.config.ts tidak ada."
-            exit 1
-          fi
-
-          if [ ! -f index.html ]; then
-            echo "ERROR: index.html tidak ada."
-            exit 1
-          fi
-
-          if [ ! -d src ]; then
-            echo "ERROR: folder src tidak ada."
-            exit 1
-          fi
-
-          echo "package.json ditemukan."
-          echo "vite.config.ts ditemukan."
-          echo "index.html ditemukan."
-          echo "src ditemukan."
+          echo "package.json       OK"
+          echo "index.html         OK"
+          echo "vite.config.ts     OK"
+          echo "tsconfig.json      OK"
+          echo "src/                OK"
 
           echo ""
-          echo "Isi package.json:"
-          cat package.json
+          echo "Script package.json:"
+          node -e "console.log(require('./package.json').scripts)"
 
           echo ""
           echo "======================================"
           echo "VERIFIKASI BERHASIL"
           echo "======================================"
 
-      - name: Commit extracted project
+      - name: Commit prepared project
         shell: bash
         run: |
           set -e
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          echo "Menambahkan perubahan..."
 
           git add -A
 
@@ -225,17 +232,13 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Fix QFX project root"
-
-          echo "Mengambil perubahan terbaru dari GitHub..."
+          git commit -m "Prepare QFX for Cloudflare"
 
           git pull --rebase origin main
-
-          echo "Push project QFX..."
 
           git push origin main
 
           echo ""
           echo "======================================"
-          echo "PROJECT QFX BERHASIL DI-PUSH"
+          echo "PROJECT QFX SIAP"
           echo "======================================"
