@@ -17,7 +17,7 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. CHECKOUT
+      # 1. CHECKOUT REPOSITORY
       # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       # =========================================================
-      # 2. INSTALL TOOLS
+      # 2. INSTALL EXTRACTION TOOLS
       # =========================================================
       - name: Install extraction tools
         shell: bash
@@ -36,7 +36,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unzip
 
-          echo "Tools ready."
+          echo "Extraction tools ready."
 
       # =========================================================
       # 3. FIND APPLICATION ZIP
@@ -57,12 +57,18 @@ jobs:
             echo "$FILE"
 
             if unzip -l "$FILE" 2>/dev/null | grep -q "vite.config.ts"; then
+
               if unzip -l "$FILE" 2>/dev/null | grep -q "index.html"; then
+
                 if unzip -l "$FILE" 2>/dev/null | grep -q "package.json"; then
+
                   ZIP_FILE="$FILE"
                   break
+
                 fi
+
               fi
+
             fi
 
           done < <(
@@ -78,6 +84,9 @@ jobs:
             echo ""
             echo "ERROR: Application ZIP was not found."
 
+            echo ""
+            echo "Available ZIP files:"
+
             find . \
               -maxdepth 3 \
               -type f \
@@ -85,6 +94,7 @@ jobs:
               -print
 
             exit 1
+
           fi
 
           echo ""
@@ -96,7 +106,7 @@ jobs:
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
       # =========================================================
-      # 4. EXTRACT APPLICATION
+      # 4. EXTRACT APPLICATION ZIP
       # =========================================================
       - name: Extract application ZIP
         shell: bash
@@ -117,9 +127,11 @@ jobs:
           cat /tmp/unzip.log
 
           if [ "$UNZIP_CODE" -ne 0 ]; then
+
             echo ""
             echo "WARNING: unzip returned code $UNZIP_CODE."
             echo "Continuing to inspect extracted files."
+
           fi
 
           test -d extracted
@@ -128,7 +140,7 @@ jobs:
           echo "Extraction finished."
 
       # =========================================================
-      # 5. REMOVE NESTED GIT
+      # 5. REMOVE NESTED GIT METADATA
       # =========================================================
       - name: Remove nested Git metadata
         shell: bash
@@ -252,7 +264,7 @@ jobs:
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
       # =========================================================
-      # 8. FIND API CLIENT
+      # 8. FIND API CLIENT WORKSPACE PACKAGE
       # =========================================================
       - name: Find API client workspace package
         shell: bash
@@ -324,7 +336,7 @@ jobs:
           echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
 
       # =========================================================
-      # 9. PREPARE API CLIENT
+      # 9. PREPARE API CLIENT PACKAGE
       # =========================================================
       - name: Prepare API client package
         shell: bash
@@ -347,7 +359,7 @@ jobs:
             | head -300
 
       # =========================================================
-      # 10. COPY APPLICATION TO ROOT
+      # 10. COPY APPLICATION TO REPOSITORY ROOT
       # =========================================================
       - name: Copy application to repository root
         shell: bash
@@ -660,10 +672,6 @@ jobs:
 
       # =========================================================
       # 14. CREATE STANDALONE TYPESCRIPT CONFIGURATION
-      #
-      # IMPORTANT:
-      # NO "baseUrl"
-      # because newer TypeScript removed that option.
       # =========================================================
       - name: Create standalone TypeScript configuration
         shell: bash
@@ -822,6 +830,9 @@ jobs:
       # =========================================================
       - name: Production build
         shell: bash
+        env:
+          PORT: "5173"
+          BASE_PATH: "/"
         run: |
           set -u
 
@@ -829,6 +840,9 @@ jobs:
           echo "======================================"
           echo "PRODUCTION BUILD"
           echo "======================================"
+
+          echo "PORT=$PORT"
+          echo "BASE_PATH=$BASE_PATH"
 
           npm run build
 
@@ -846,7 +860,7 @@ jobs:
           echo "Temporary files removed."
 
       # =========================================================
-      # 21. FINAL VERIFICATION
+      # 21. FINAL PROJECT VERIFICATION
       # =========================================================
       - name: Final project verification
         shell: bash
