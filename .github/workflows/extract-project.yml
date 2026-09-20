@@ -67,7 +67,7 @@ jobs:
               echo ""
               echo "======================================"
               echo "PROJECT QFX DITEMUKAN"
-              echo "ZIP  : $FOUND_ZIP"
+              echo "ZIP   : $FOUND_ZIP"
               echo "FOLDER: $FOUND_APP"
               echo "======================================"
 
@@ -133,10 +133,12 @@ jobs:
             ! -name ".git" \
             ! -name ".github" \
             ! -name "*.zip" \
+            ! -name "extracted" \
+            ! -name "testzip" \
             -exec rm -rf {} +
 
           echo ""
-          echo "Menyalin project QFX..."
+          echo "Menyalin project QFX ke root repository..."
 
           cp -a "$APP_DIR"/. ./
 
@@ -154,8 +156,12 @@ jobs:
           echo "======================================"
 
           echo ""
-          echo "Root project:"
+          echo "File root:"
           ls -la
+
+          echo ""
+          echo "Folder src:"
+          ls -la src
 
           rm -rf extracted testzip
 
@@ -164,7 +170,9 @@ jobs:
         run: |
           set -e
 
-          echo "Memeriksa project..."
+          echo "======================================"
+          echo "VERIFIKASI PROJECT"
+          echo "======================================"
 
           if [ ! -f package.json ]; then
             echo "ERROR: package.json tidak ada."
@@ -186,10 +194,19 @@ jobs:
             exit 1
           fi
 
-          echo "Semua file utama ditemukan."
+          echo "package.json ditemukan."
+          echo "vite.config.ts ditemukan."
+          echo "index.html ditemukan."
+          echo "src ditemukan."
+
           echo ""
-          echo "package.json:"
-          head -40 package.json
+          echo "Isi package.json:"
+          cat package.json
+
+          echo ""
+          echo "======================================"
+          echo "VERIFIKASI BERHASIL"
+          echo "======================================"
 
       - name: Commit extracted project
         shell: bash
@@ -198,6 +215,8 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Menambahkan perubahan..."
 
           git add -A
 
@@ -208,11 +227,15 @@ jobs:
 
           git commit -m "Fix QFX project root"
 
+          echo "Mengambil perubahan terbaru dari GitHub..."
+
           git pull --rebase origin main
+
+          echo "Push project QFX..."
 
           git push origin main
 
           echo ""
           echo "======================================"
-          echo "SELESAI"
+          echo "PROJECT QFX BERHASIL DI-PUSH"
           echo "======================================"
