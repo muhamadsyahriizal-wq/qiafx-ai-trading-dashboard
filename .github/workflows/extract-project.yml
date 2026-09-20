@@ -15,170 +15,465 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # =========================================================
+      # 1. CHECKOUT
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: false
           fetch-depth: 0
 
+      # =========================================================
+      # 2. INSTALL TOOLS
+      # =========================================================
       - name: Install extraction tools
+        shell: bash
         run: |
+          set -u
+
           sudo apt-get update
           sudo apt-get install -y unzip
 
-      - name: Find and extract application ZIP
+          echo "Tools ready."
+
+      # =========================================================
+      # 3. FIND ZIP
+      # =========================================================
+      - name: Find application ZIP
         shell: bash
         run: |
-          set -e
+          set -u
+
+          echo "Searching for application ZIP..."
+
+          ZIP_FILE=""
+
+          while IFS= read -r -d '' FILE; do
+            echo ""
+            echo "Checking ZIP:"
+            echo "$FILE"
+
+            if unzip -l "$FILE" 2>/dev/null | grep -q "vite.config.ts"; then
+              if unzip -l "$FILE" 2>/dev/null | grep -q "index.html"; then
+                if unzip -l "$FILE" 2>/dev/null | grep -q "package.json"; then
+                  ZIP_FILE="$FILE"
+                  break
+                fi
+              fi
+            fi
+
+          done < <(
+            find . \
+              -maxdepth 3 \
+              -type f \
+              -name "*.zip" \
+              -print0
+          )
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo ""
+            echo "ERROR: Application ZIP was not found."
+            echo ""
+            echo "ZIP files found:"
+            find . -maxdepth 3 -type f -name "*.zip" -print
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "SELECTED ZIP:"
+          echo "$ZIP_FILE"
+          echo "======================================"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      # =========================================================
+      # 4. EXTRACT ZIP
+      # =========================================================
+      - name: Extract application ZIP
+        shell: bash
+        run: |
+          set -u
 
           rm -rf extracted
           mkdir -p extracted
 
-          ZIP_FILE=""
+          echo "Extracting:"
+          echo "$ZIP_FILE"
 
-          while IFS= read -r -d '' file; do
-            echo "Checking: $file"
+          unzip -o "$ZIP_FILE" -d extracted > /tmp/unzip.log 2>&1
+          UNZIP_CODE=$?
 
-            if unzip -l "$file" | grep -q "vite.config.ts" &&
-               unzip -l "$file" | grep -q "index.html" &&
-               unzip -l "$file" | grep -q "package.json"; then
-              ZIP_FILE="$file"
-              break
-            fi
-          done < <(find . -maxdepth 2 -type f -name "*.zip" -print0)
+          cat /tmp/unzip.log
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No suitable application ZIP found."
+          # Some ZIPs containing a nested .git directory can make
+          # unzip return a non-zero status even though the application
+          # files were extracted correctly.
+          if [ "$UNZIP_CODE" -ne 0 ]; then
+            echo ""
+            echo "WARNING: unzip returned code $UNZIP_CODE."
+            echo "Continuing because extracted files will be inspected."
+          fi
+
+          echo ""
+          echo "Extraction finished."
+
+          if [ ! -d extracted ]; then
+            echo "ERROR: extracted directory does not exist."
             exit 1
           fi
 
-          echo "Using ZIP: $ZIP_FILE"
-
-          unzip -q "$ZIP_FILE" -d extracted
-
-          echo "Extracted files:"
-          find extracted -maxdepth 5 -type f | head -300
-
+      # =========================================================
+      # 5. REMOVE NESTED GIT
+      # =========================================================
       - name: Remove nested Git metadata
         shell: bash
         run: |
-          set -e
+          set -u
 
-          find extracted -type d -name ".git" -prune -exec rm -rf {} +
-          find extracted -type f -name ".gitmodules" -delete
+          echo "Removing nested Git repositories..."
 
-          rm -rf .gitmodules
+          find extracted \
+            -type d \
+            -name ".git" \
+            -prune \
+            -exec rm -rf {} + 2>/dev/null || true
 
+          find extracted \
+            -type f \
+            -name ".gitmodules" \
+            -delete 2>/dev/null || true
+
+          find extracted \
+            -type f \
+            -name ".git" \
+            -delete 2>/dev/null || true
+
+          echo "Nested Git cleanup finished."
+
+      # =========================================================
+      # 6. SHOW EXTRACTED STRUCTURE
+      # =========================================================
+      - name: Inspect extracted project
+        shell: bash
+        run: |
+          set -u
+
+          echo ""
+          echo "======================================"
+          echo "EXTRACTED DIRECTORIES"
+          echo "======================================"
+
+          find extracted \
+            -maxdepth 5 \
+            -type d \
+            -not -path "*/node_modules*" \
+            | head -300
+
+          echo ""
+          echo "======================================"
+          echo "PROJECT FILES"
+          echo "======================================"
+
+          find extracted \
+            -maxdepth 7 \
+            -type f \
+            -not -path "*/node_modules/*" \
+            -not -path "*/.git/*" \
+            | head -400
+
+      # =========================================================
+      # 7. LOCATE VITE APP
+      # =========================================================
       - name: Locate Vite application
         shell: bash
         run: |
-          set -e
+          set -u
 
           APP_DIR=""
 
-          while IFS= read -r -d '' file; do
-            DIR="$(dirname "$file")"
+          echo ""
+          echo "Searching for Vite application..."
+
+          while IFS= read -r -d '' VITE_FILE; do
+
+            DIR="$(dirname "$VITE_FILE")"
 
             if [ -f "$DIR/index.html" ] &&
-               [ -f "$DIR/package.json" ] &&
-               [ -f "$DIR/vite.config.ts" ]; then
+               [ -f "$DIR/package.json" ]; then
+
               APP_DIR="$DIR"
               break
+
             fi
-          done < <(find extracted -type f -name "vite.config.ts" -print0)
+
+          done < <(
+            find extracted \
+              -type f \
+              -name "vite.config.ts" \
+              -not -path "*/node_modules/*" \
+              -print0
+          )
 
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: Could not locate Vite application."
+            echo ""
+            echo "ERROR: Vite application was not found."
+
+            echo ""
+            echo "vite.config.ts files:"
+            find extracted \
+              -type f \
+              -name "vite.config.ts" \
+              -not -path "*/node_modules/*" \
+              -print
+
+            echo ""
+            echo "package.json files:"
+            find extracted \
+              -type f \
+              -name "package.json" \
+              -not -path "*/node_modules/*" \
+              -print
+
             exit 1
           fi
 
-          echo "Application directory: $APP_DIR"
+          echo ""
+          echo "======================================"
+          echo "APPLICATION FOUND"
+          echo "======================================"
+          echo "$APP_DIR"
+
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
+      # =========================================================
+      # 8. FIND API CLIENT
+      # =========================================================
       - name: Find API client workspace package
         shell: bash
         run: |
-          set -e
+          set -u
 
           API_PACKAGE_DIR=""
 
-          while IFS= read -r -d '' file; do
-            NAME="$(node -e '
-              const fs=require("fs");
-              try {
-                const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
-                process.stdout.write(p.name || "");
-              } catch(e) {}
-            ' "$file")"
+          echo ""
+          echo "Searching for:"
+          echo "@workspace/api-client-react"
+
+          while IFS= read -r -d '' PACKAGE_FILE; do
+
+            NAME="$(
+              node -e '
+                const fs = require("fs");
+
+                try {
+                  const file = process.argv[1];
+                  const pkg = JSON.parse(
+                    fs.readFileSync(file, "utf8")
+                  );
+
+                  process.stdout.write(pkg.name || "");
+                } catch (error) {
+                  process.stdout.write("");
+                }
+              ' "$PACKAGE_FILE"
+            )"
+
+            echo "Checking package:"
+            echo "$PACKAGE_FILE"
+            echo "Name: $NAME"
 
             if [ "$NAME" = "@workspace/api-client-react" ]; then
-              API_PACKAGE_DIR="$(dirname "$file")"
+              API_PACKAGE_DIR="$(dirname "$PACKAGE_FILE")"
               break
             fi
-          done < <(find extracted -type f -name "package.json" -not -path "*/node_modules/*" -print0)
+
+          done < <(
+            find extracted \
+              -type f \
+              -name "package.json" \
+              -not -path "*/node_modules/*" \
+              -print0
+          )
 
           if [ -z "$API_PACKAGE_DIR" ]; then
-            echo "ERROR: @workspace/api-client-react was not found inside the ZIP."
+
             echo ""
-            echo "Available package.json files:"
-            find extracted -type f -name "package.json" -not -path "*/node_modules/*" -print
+            echo "======================================"
+            echo "ERROR"
+            echo "======================================"
+            echo "@workspace/api-client-react was NOT found."
+
+            echo ""
+            echo "Available package names:"
+
+            while IFS= read -r -d '' PACKAGE_FILE; do
+
+              node -e '
+                const fs = require("fs");
+
+                try {
+                  const file = process.argv[1];
+                  const pkg = JSON.parse(
+                    fs.readFileSync(file, "utf8")
+                  );
+
+                  console.log(
+                    (pkg.name || "(unnamed)") +
+                    " -> " +
+                    file
+                  );
+                } catch (error) {
+                  console.log(
+                    "(invalid package.json) -> " +
+                    process.argv[1]
+                  );
+                }
+              ' "$PACKAGE_FILE"
+
+            done < <(
+              find extracted \
+                -type f \
+                -name "package.json" \
+                -not -path "*/node_modules/*" \
+                -print0
+            )
+
             exit 1
           fi
 
-          echo "Found API client:"
+          echo ""
+          echo "======================================"
+          echo "API CLIENT FOUND"
+          echo "======================================"
           echo "$API_PACKAGE_DIR"
 
-          rm -rf packages/api-client-react
+          echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
+
+      # =========================================================
+      # 9. PREPARE API CLIENT DIRECTORY
+      # =========================================================
+      - name: Prepare API client package
+        shell: bash
+        run: |
+          set -u
+
+          rm -rf packages
           mkdir -p packages
 
           cp -R "$API_PACKAGE_DIR" packages/api-client-react
 
-          echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
+          echo ""
+          echo "API client copied to:"
+          echo "packages/api-client-react"
 
+          echo ""
+          echo "API client files:"
+
+          find packages/api-client-react \
+            -maxdepth 5 \
+            -type f \
+            | head -300
+
+      # =========================================================
+      # 10. COPY APP TO ROOT
+      # =========================================================
       - name: Copy application to repository root
         shell: bash
         run: |
-          set -e
+          set -u
 
-          # Preserve important repository files.
-          mkdir -p .qfx-preserve
+          echo "Preparing repository root..."
 
-          [ -f package.json ] && cp package.json .qfx-preserve/old-package.json || true
-          [ -f tsconfig.json ] && cp tsconfig.json .qfx-preserve/old-tsconfig.json || true
+          # Keep the ZIP.
+          mkdir -p .qfx-temp
 
-          # Remove previous application files.
+          if [ -f "AI-Trading-Dashboard.zip" ]; then
+            cp "AI-Trading-Dashboard.zip" \
+              .qfx-temp/AI-Trading-Dashboard.zip
+          fi
+
+          # Save API client temporarily.
+          rm -rf .qfx-temp/api-client-react
+          cp -R packages/api-client-react \
+            .qfx-temp/api-client-react
+
+          # Remove previous generated application files.
           find . -maxdepth 1 \
             ! -name "." \
             ! -name ".git" \
             ! -name ".github" \
             ! -name ".gitignore" \
-            ! -name ".qfx-preserve" \
-            ! -name "AI-Trading-Dashboard.zip" \
-            ! -name "packages" \
-            -exec rm -rf {} +
+            ! -name ".qfx-temp" \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          # Restore ZIP.
+          if [ -f ".qfx-temp/AI-Trading-Dashboard.zip" ]; then
+            cp ".qfx-temp/AI-Trading-Dashboard.zip" \
+              "AI-Trading-Dashboard.zip"
+          fi
 
           # Copy application.
           cp -R "$APP_DIR"/. .
 
-          # Restore API client package.
+          # Restore API client.
           mkdir -p packages
           rm -rf packages/api-client-react
-          cp -R "$API_PACKAGE_DIR" packages/api-client-react
 
-          # Remove nested Git metadata.
-          find . -type d -name ".git" -prune -not -path "./.git" -exec rm -rf {} +
-          find . -type f -name ".gitmodules" -not -path "./.git/*" -delete
+          cp -R \
+            ".qfx-temp/api-client-react" \
+            "packages/api-client-react"
 
+          echo "Application copied."
+
+      # =========================================================
+      # 11. CLEAN NESTED GIT AGAIN
+      # =========================================================
+      - name: Final Git cleanup
+        shell: bash
+        run: |
+          set -u
+
+          find . \
+            -mindepth 2 \
+            -type d \
+            -name ".git" \
+            -prune \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          find . \
+            -type f \
+            -name ".gitmodules" \
+            -not -path "./.git/*" \
+            -delete 2>/dev/null || true
+
+          rm -rf extracted
+
+          echo "Final Git cleanup complete."
+
+      # =========================================================
+      # 12. FIX WORKSPACE DEPENDENCY
+      # =========================================================
       - name: Fix workspace dependency
         shell: bash
         run: |
-          set -e
+          set -u
+
+          if [ ! -f package.json ]; then
+            echo "ERROR: package.json not found."
+            exit 1
+          fi
 
           node <<'NODE'
           const fs = require("fs");
 
           const file = "package.json";
-          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+
+          const pkg = JSON.parse(
+            fs.readFileSync(file, "utf8")
+          );
 
           const sections = [
             "dependencies",
@@ -189,19 +484,21 @@ jobs:
           let found = false;
 
           for (const section of sections) {
+            if (!pkg[section]) continue;
+
             if (
-              pkg[section] &&
               pkg[section]["@workspace/api-client-react"]
             ) {
               pkg[section]["@workspace/api-client-react"] =
                 "file:./packages/api-client-react";
+
               found = true;
             }
           }
 
           if (!found) {
             console.log(
-              "WARNING: @workspace/api-client-react dependency was not present."
+              "WARNING: API client dependency was not found in package.json."
             );
           }
 
@@ -211,117 +508,202 @@ jobs:
           );
           NODE
 
-          echo "Updated package.json:"
+          echo ""
+          echo "API client dependency:"
           grep -n "api-client-react" package.json || true
 
-      - name: Remove unsupported workspace dependencies from API client
+      # =========================================================
+      # 13. CHECK FOR OTHER WORKSPACE DEPENDENCIES
+      # =========================================================
+      - name: Check workspace dependencies
         shell: bash
         run: |
-          set -e
+          set -u
 
-          if [ -f packages/api-client-react/package.json ]; then
-            node <<'NODE'
-            const fs = require("fs");
+          echo ""
+          echo "Checking application package.json..."
 
-            const file = "packages/api-client-react/package.json";
-            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-
-            const sections = [
-              "dependencies",
-              "devDependencies",
-              "optionalDependencies",
-              "peerDependencies"
-            ];
-
-            for (const section of sections) {
-              if (!pkg[section]) continue;
-
-              for (const [name, value] of Object.entries(pkg[section])) {
-                if (
-                  typeof value === "string" &&
-                  value.startsWith("workspace:")
-                ) {
-                  console.log(
-                    `Found workspace dependency in API client: ${name}=${value}`
-                  );
-
-                  if (name === "@workspace/api-zod") {
-                    console.log(
-                      "Removing optional workspace api-zod dependency."
-                    );
-                    delete pkg[section][name];
-                  }
-                }
-              }
-            }
-
-            fs.writeFileSync(
-              file,
-              JSON.stringify(pkg, null, 2) + "\n"
-            );
-            NODE
+          if grep -n "workspace:" package.json; then
+            echo ""
+            echo "WARNING: Other workspace dependencies remain."
+          else
+            echo "No workspace dependencies in application."
           fi
 
+          echo ""
+          echo "Checking API client package.json..."
+
+          if [ -f packages/api-client-react/package.json ]; then
+
+            if grep -n "workspace:" \
+              packages/api-client-react/package.json; then
+
+              echo ""
+              echo "WARNING: API client contains workspace dependencies."
+
+            else
+
+              echo "No workspace dependencies in API client."
+
+            fi
+
+          fi
+
+      # =========================================================
+      # 14. VERIFY REQUIRED FILES
+      # =========================================================
       - name: Verify project structure
         shell: bash
         run: |
-          set -e
+          set -u
 
-          echo "=== Root files ==="
+          echo ""
+          echo "======================================"
+          echo "ROOT"
+          echo "======================================"
+
           ls -la
 
           echo ""
-          echo "=== Source files ==="
-          find src -maxdepth 3 -type f | sort | head -300
+          echo "======================================"
+          echo "SOURCE"
+          echo "======================================"
+
+          find src \
+            -maxdepth 4 \
+            -type f \
+            | sort \
+            | head -400
 
           echo ""
-          echo "=== API client ==="
-          find packages/api-client-react -maxdepth 3 -type f | sort | head -200
+          echo "======================================"
+          echo "API CLIENT"
+          echo "======================================"
+
+          find packages/api-client-react \
+            -maxdepth 5 \
+            -type f \
+            | sort \
+            | head -300
 
           echo ""
-          echo "=== Workspace references ==="
-          grep -R "workspace:" \
-            package.json \
-            packages/api-client-react/package.json \
-            2>/dev/null || true
+          echo "======================================"
+          echo "REQUIRED FILE CHECK"
+          echo "======================================"
 
           test -f package.json
           test -f index.html
           test -f vite.config.ts
+          test -f tsconfig.json
           test -d src
+          test -d packages/api-client-react
           test -f packages/api-client-react/package.json
 
+          echo ""
+          echo "All required files exist."
+
+      # =========================================================
+      # 15. INSTALL DEPENDENCIES
+      # =========================================================
       - name: Install dependencies
-        run: |
-          npm install --legacy-peer-deps
-
-      - name: Test TypeScript
-        run: |
-          npm run typecheck
-
-      - name: Test production build
-        run: |
-          npm run build
-
-      - name: Remove temporary extraction
         shell: bash
         run: |
-          rm -rf extracted
-          rm -rf .qfx-preserve
+          set -u
 
+          echo "Installing npm dependencies..."
+
+          npm install --legacy-peer-deps
+
+      # =========================================================
+      # 16. TYPECHECK
+      # =========================================================
+      - name: TypeScript typecheck
+        shell: bash
+        run: |
+          set -u
+
+          echo "Running TypeScript check..."
+
+          npm run typecheck
+
+      # =========================================================
+      # 17. BUILD
+      # =========================================================
+      - name: Production build
+        shell: bash
+        run: |
+          set -u
+
+          echo "Running production build..."
+
+          npm run build
+
+      # =========================================================
+      # 18. CLEAN TEMPORARY FILES
+      # =========================================================
+      - name: Clean temporary files
+        shell: bash
+        run: |
+          set -u
+
+          rm -rf .qfx-temp
+          rm -rf extracted
+
+          echo "Temporary files removed."
+
+      # =========================================================
+      # 19. SHOW FINAL STRUCTURE
+      # =========================================================
+      - name: Final project verification
+        shell: bash
+        run: |
+          set -u
+
+          echo ""
+          echo "======================================"
+          echo "FINAL QFX PROJECT"
+          echo "======================================"
+
+          echo ""
+          echo "Root:"
+          ls -la
+
+          echo ""
+          echo "API client:"
+          ls -la packages/api-client-react
+
+          echo ""
+          echo "Build output:"
+          ls -la dist 2>/dev/null || true
+
+          echo ""
+          echo "QFX project verification complete."
+
+      # =========================================================
+      # 20. COMMIT
+      # =========================================================
       - name: Commit prepared project
         shell: bash
         run: |
-          set -e
+          set -u
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
 
           if git diff --cached --quiet; then
+
             echo "No changes to commit."
+
           else
-            git commit -m "Prepare QFX dashboard for Cloudflare"
+
+            git commit \
+              -m "Prepare QFX dashboard for Cloudflare"
+
             git push
+
           fi
