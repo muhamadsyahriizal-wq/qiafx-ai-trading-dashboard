@@ -1,0 +1,35 @@
+name: Restore QFX Project
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore QFX project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Checking target commit..."
+          git cat-file -e 5bd599a^{commit}
+
+          echo "Restoring main to QFX commit 5bd599a..."
+          git checkout -B main 5bd599a
+
+          echo "Pushing restored QFX project..."
+          git push origin main --force
+
+          echo "QFX RESTORED SUCCESSFULLY"
+          git log -1 --oneline
