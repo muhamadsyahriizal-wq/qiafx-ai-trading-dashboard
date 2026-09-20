@@ -1,11 +1,11 @@
 name: Prepare QFX Project
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "*.zip"
       - ".github/workflows/extract-project.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,193 +18,161 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
           submodules: false
+          fetch-depth: 0
 
-      - name: Extract QFX dashboard
+      - name: Install extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+
+      - name: Find and extract application ZIP
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MENCARI AI TRADING DASHBOARD"
-          echo "=========================================="
-
-          rm -rf extracted testzip
+          rm -rf extracted
           mkdir -p extracted
 
-          FOUND_ZIP=""
+          ZIP_FILE=""
 
-          for ZIP in ./*.zip; do
-            [ -f "$ZIP" ] || continue
+          while IFS= read -r -d '' file; do
+            echo "Checking: $file"
 
-            echo ""
-            echo "Memeriksa ZIP: $ZIP"
-
-            rm -rf testzip
-            mkdir -p testzip
-
-            unzip -q "$ZIP" -d testzip
-
-            CANDIDATE=$(find testzip \
-              -type f \
-              \( -name "vite.config.ts" -o -name "vite.config.js" \) \
-              -print -quit)
-
-            if [ -n "$CANDIDATE" ]; then
-              FOUND_ZIP="$ZIP"
-              echo "ZIP cocok ditemukan: $ZIP"
-              echo "Vite config: $CANDIDATE"
+            if unzip -l "$file" | grep -q "vite.config.ts" &&
+               unzip -l "$file" | grep -q "index.html" &&
+               unzip -l "$file" | grep -q "package.json"; then
+              ZIP_FILE="$file"
               break
             fi
-          done
+          done < <(find . -maxdepth 2 -type f -name "*.zip" -print0)
 
-          if [ -z "$FOUND_ZIP" ]; then
-            echo "ERROR: Tidak menemukan ZIP project QFX."
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No suitable application ZIP found."
             exit 1
           fi
 
-          rm -rf testzip
-          mkdir -p extracted
+          echo "Using ZIP: $ZIP_FILE"
 
-          echo ""
-          echo "Mengekstrak:"
-          echo "$FOUND_ZIP"
+          unzip -q "$ZIP_FILE" -d extracted
 
-          unzip -q "$FOUND_ZIP" -d extracted
+          echo "Extracted files:"
+          find extracted -maxdepth 5 -type f | head -300
 
-          echo ""
-          echo "Menghapus metadata Git/submodule dari hasil ZIP..."
+      - name: Remove nested Git metadata
+        shell: bash
+        run: |
+          set -e
 
-          find extracted \
-            -type d \
-            -name ".git" \
-            -prune \
-            -exec rm -rf {} +
+          find extracted -type d -name ".git" -prune -exec rm -rf {} +
+          find extracted -type f -name ".gitmodules" -delete
 
-          find extracted \
-            -type f \
-            -name ".gitmodules" \
-            -delete
+          rm -rf .gitmodules
 
-          echo "Metadata Git/submodule dari ZIP dibersihkan."
-
-          echo ""
-          echo "Mencari folder project..."
+      - name: Locate Vite application
+        shell: bash
+        run: |
+          set -e
 
           APP_DIR=""
 
-          while IFS= read -r DASHBOARD_FILE; do
-            DIR="$(dirname "$DASHBOARD_FILE")"
+          while IFS= read -r -d '' file; do
+            DIR="$(dirname "$file")"
 
-            while [ "$DIR" != "." ] && [ "$DIR" != "/" ]; do
-              if [ -f "$DIR/package.json" ] && \
-                 [ -f "$DIR/index.html" ] && \
-                 { [ -f "$DIR/vite.config.ts" ] || [ -f "$DIR/vite.config.js" ]; }; then
-
-                APP_DIR="$DIR"
-                break 2
-              fi
-
-              DIR="$(dirname "$DIR")"
-            done
-          done < <(find extracted -type f -path "*/src/pages/dashboard.tsx")
+            if [ -f "$DIR/index.html" ] &&
+               [ -f "$DIR/package.json" ] &&
+               [ -f "$DIR/vite.config.ts" ]; then
+              APP_DIR="$DIR"
+              break
+            fi
+          done < <(find extracted -type f -name "vite.config.ts" -print0)
 
           if [ -z "$APP_DIR" ]; then
-            while IFS= read -r VITE_FILE; do
-              DIR="$(dirname "$VITE_FILE")"
-
-              if [ -f "$DIR/package.json" ] && \
-                 [ -f "$DIR/index.html" ]; then
-                APP_DIR="$DIR"
-                break
-              fi
-            done < <(
-              find extracted -type f \
-              \( -name "vite.config.ts" -o -name "vite.config.js" \)
-            )
-          fi
-
-          if [ -z "$APP_DIR" ]; then
-            echo ""
-            echo "ERROR: Folder project QFX tidak ditemukan."
-            echo ""
-            echo "Isi extracted:"
-            find extracted -maxdepth 6 -type f | head -200
+            echo "ERROR: Could not locate Vite application."
             exit 1
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "PROJECT DITEMUKAN"
-          echo "=========================================="
-          echo "$APP_DIR"
+          echo "Application directory: $APP_DIR"
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "File penting:"
-          find "$APP_DIR" -maxdepth 3 -type f \
-            \( -name "package.json" \
-            -o -name "index.html" \
-            -o -name "vite.config.ts" \
-            -o -name "tsconfig.json" \
-            -o -name "dashboard.tsx" \
-            \) \
-            -print
-
-          echo ""
-          echo "=========================================="
-          echo "MENYALIN PROJECT QFX KE ROOT REPOSITORY"
-          echo "=========================================="
-
-          find . -mindepth 1 -maxdepth 1 \
-            ! -name ".git" \
-            ! -name ".github" \
-            ! -name "*.zip" \
-            ! -name "extracted" \
-            -exec rm -rf {} +
-
-          cp -a "$APP_DIR"/. ./
-
-          echo ""
-          echo "Project berhasil disalin."
-
-          echo ""
-          echo "Membersihkan sisa metadata Git..."
-
-          find . \
-            -mindepth 2 \
-            -type d \
-            -name ".git" \
-            -prune \
-            -exec rm -rf {} +
-
-          find . \
-            -mindepth 2 \
-            -type f \
-            -name ".gitmodules" \
-            -delete
-
-          echo ""
-          echo "Menghapus folder hasil ekstraksi agar tidak menjadi submodule..."
-
-          rm -rf extracted
-          rm -rf testzip
-
-          echo ""
-          echo "=========================================="
-          echo "PEMBERSIHAN SELESAI"
-          echo "=========================================="
-
-      - name: Prepare package.json
+      - name: Find API client workspace package
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MEMERIKSA PACKAGE.JSON"
-          echo "=========================================="
+          API_PACKAGE_DIR=""
 
-          test -f package.json
+          while IFS= read -r -d '' file; do
+            NAME="$(node -e '
+              const fs=require("fs");
+              try {
+                const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+                process.stdout.write(p.name || "");
+              } catch(e) {}
+            ' "$file")"
+
+            if [ "$NAME" = "@workspace/api-client-react" ]; then
+              API_PACKAGE_DIR="$(dirname "$file")"
+              break
+            fi
+          done < <(find extracted -type f -name "package.json" -not -path "*/node_modules/*" -print0)
+
+          if [ -z "$API_PACKAGE_DIR" ]; then
+            echo "ERROR: @workspace/api-client-react was not found inside the ZIP."
+            echo ""
+            echo "Available package.json files:"
+            find extracted -type f -name "package.json" -not -path "*/node_modules/*" -print
+            exit 1
+          fi
+
+          echo "Found API client:"
+          echo "$API_PACKAGE_DIR"
+
+          rm -rf packages/api-client-react
+          mkdir -p packages
+
+          cp -R "$API_PACKAGE_DIR" packages/api-client-react
+
+          echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
+
+      - name: Copy application to repository root
+        shell: bash
+        run: |
+          set -e
+
+          # Preserve important repository files.
+          mkdir -p .qfx-preserve
+
+          [ -f package.json ] && cp package.json .qfx-preserve/old-package.json || true
+          [ -f tsconfig.json ] && cp tsconfig.json .qfx-preserve/old-tsconfig.json || true
+
+          # Remove previous application files.
+          find . -maxdepth 1 \
+            ! -name "." \
+            ! -name ".git" \
+            ! -name ".github" \
+            ! -name ".gitignore" \
+            ! -name ".qfx-preserve" \
+            ! -name "AI-Trading-Dashboard.zip" \
+            ! -name "packages" \
+            -exec rm -rf {} +
+
+          # Copy application.
+          cp -R "$APP_DIR"/. .
+
+          # Restore API client package.
+          mkdir -p packages
+          rm -rf packages/api-client-react
+          cp -R "$API_PACKAGE_DIR" packages/api-client-react
+
+          # Remove nested Git metadata.
+          find . -type d -name ".git" -prune -not -path "./.git" -exec rm -rf {} +
+          find . -type f -name ".gitmodules" -not -path "./.git/*" -delete
+
+      - name: Fix workspace dependency
+        shell: bash
+        run: |
+          set -e
 
           node <<'NODE'
           const fs = require("fs");
@@ -218,225 +186,128 @@ jobs:
             "optionalDependencies"
           ];
 
+          let found = false;
+
           for (const section of sections) {
-            if (!pkg[section]) continue;
-
-            for (const [name, value] of Object.entries(pkg[section])) {
-              if (value === "catalog:") {
-                console.log(`catalog ditemukan: ${name}`);
-
-                const { execSync } = require("child_process");
-
-                const version = execSync(
-                  `npm view "${name}" version`,
-                  {
-                    encoding: "utf8"
-                  }
-                ).trim();
-
-                if (!version) {
-                  throw new Error(
-                    `Tidak dapat menemukan versi npm untuk ${name}`
-                  );
-                }
-
-                pkg[section][name] = `^${version}`;
-
-                console.log(
-                  `${name}: catalog: -> ^${version}`
-                );
-              }
+            if (
+              pkg[section] &&
+              pkg[section]["@workspace/api-client-react"]
+            ) {
+              pkg[section]["@workspace/api-client-react"] =
+                "file:./packages/api-client-react";
+              found = true;
             }
+          }
+
+          if (!found) {
+            console.log(
+              "WARNING: @workspace/api-client-react dependency was not present."
+            );
           }
 
           fs.writeFileSync(
             file,
             JSON.stringify(pkg, null, 2) + "\n"
           );
-
-          console.log("package.json selesai diperiksa.");
           NODE
 
-          echo ""
-          echo "Memastikan tidak ada catalog:"
+          echo "Updated package.json:"
+          grep -n "api-client-react" package.json || true
 
-          if grep -R '"catalog:"' package.json; then
-            echo "ERROR: catalog masih ditemukan."
-            exit 1
-          fi
-
-          echo "Tidak ada catalog: lagi."
-
-      - name: Fix TypeScript configuration
+      - name: Remove unsupported workspace dependencies from API client
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MEMERIKSA TSCONFIG"
-          echo "=========================================="
+          if [ -f packages/api-client-react/package.json ]; then
+            node <<'NODE'
+            const fs = require("fs");
 
-          if [ -f tsconfig.json ]; then
-            echo "tsconfig.json ditemukan."
+            const file = "packages/api-client-react/package.json";
+            const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
 
-            if grep -q '"extends"' tsconfig.json; then
-              echo "Menggunakan tsconfig project yang ada."
-            else
-              echo "tsconfig tidak memakai extends."
-            fi
-          else
-            echo "tsconfig.json belum ada."
-            echo "Membuat konfigurasi TypeScript dasar."
+            const sections = [
+              "dependencies",
+              "devDependencies",
+              "optionalDependencies",
+              "peerDependencies"
+            ];
 
-            cat > tsconfig.json <<'EOF'
-          {
-            "compilerOptions": {
-              "target": "ES2022",
-              "useDefineForClassFields": true,
-              "lib": [
-                "ES2022",
-                "DOM",
-                "DOM.Iterable"
-              ],
-              "allowJs": false,
-              "skipLibCheck": true,
-              "esModuleInterop": true,
-              "allowSyntheticDefaultImports": true,
-              "strict": true,
-              "forceConsistentCasingInFileNames": true,
-              "module": "ESNext",
-              "moduleResolution": "Bundler",
-              "resolveJsonModule": true,
-              "isolatedModules": true,
-              "noEmit": true,
-              "jsx": "react-jsx",
-              "incremental": true,
-              "types": [
-                "node",
-                "vite/client"
-              ],
-              "baseUrl": ".",
-              "paths": {
-                "@/*": [
-                  "./src/*"
-                ]
+            for (const section of sections) {
+              if (!pkg[section]) continue;
+
+              for (const [name, value] of Object.entries(pkg[section])) {
+                if (
+                  typeof value === "string" &&
+                  value.startsWith("workspace:")
+                ) {
+                  console.log(
+                    `Found workspace dependency in API client: ${name}=${value}`
+                  );
+
+                  if (name === "@workspace/api-zod") {
+                    console.log(
+                      "Removing optional workspace api-zod dependency."
+                    );
+                    delete pkg[section][name];
+                  }
+                }
               }
-            },
-            "include": [
-              "src/**/*",
-              "mockupPreviewPlugin.ts",
-              "vite.config.ts"
-            ],
-            "exclude": [
-              "node_modules",
-              "build",
-              "dist",
-              "**/*.test.ts"
-            ]
-          }
-          EOF
+            }
+
+            fs.writeFileSync(
+              file,
+              JSON.stringify(pkg, null, 2) + "\n"
+            );
+            NODE
           fi
 
-      - name: Verify no submodule artifacts
+      - name: Verify project structure
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MEMERIKSA SUBMODULE"
-          echo "=========================================="
+          echo "=== Root files ==="
+          ls -la
 
-          if [ -f ".gitmodules" ]; then
-            echo "ERROR: .gitmodules masih ada di root."
-            exit 1
-          fi
+          echo ""
+          echo "=== Source files ==="
+          find src -maxdepth 3 -type f | sort | head -300
 
-          NESTED_GIT=$(find . \
-            -mindepth 2 \
-            -type d \
-            -name ".git" \
-            -print -quit || true)
+          echo ""
+          echo "=== API client ==="
+          find packages/api-client-react -maxdepth 3 -type f | sort | head -200
 
-          if [ -n "$NESTED_GIT" ]; then
-            echo "ERROR: Nested Git repository ditemukan:"
-            echo "$NESTED_GIT"
-            exit 1
-          fi
-
-          echo "Tidak ada metadata submodule."
-          echo "Submodule check OK."
-
-      - name: Verify QFX project
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "VERIFIKASI PROJECT QFX"
-          echo "=========================================="
+          echo ""
+          echo "=== Workspace references ==="
+          grep -R "workspace:" \
+            package.json \
+            packages/api-client-react/package.json \
+            2>/dev/null || true
 
           test -f package.json
           test -f index.html
+          test -f vite.config.ts
           test -d src
+          test -f packages/api-client-react/package.json
 
-          echo ""
-          echo "package.json OK"
-          echo "index.html OK"
-          echo "src/ OK"
-
-          if [ -f vite.config.ts ]; then
-            echo "vite.config.ts OK"
-          elif [ -f vite.config.js ]; then
-            echo "vite.config.js OK"
-          else
-            echo "ERROR: vite.config tidak ditemukan."
-            exit 1
-          fi
-
-          echo ""
-          echo "Mencari dashboard.tsx:"
-
-          DASHBOARD=$(find src \
-            -type f \
-            -name "dashboard.tsx" \
-            -print -quit || true)
-
-          if [ -n "$DASHBOARD" ]; then
-            echo "DASHBOARD DITEMUKAN:"
-            echo "$DASHBOARD"
-          else
-            echo "dashboard.tsx belum ditemukan."
-          fi
-
-          echo ""
-          echo "Struktur src:"
-          find src -maxdepth 3 -type f | sort | head -200
-
-          echo ""
-          echo "=========================================="
-          echo "VERIFIKASI BERHASIL"
-          echo "=========================================="
-
-      - name: Install dependencies and test build
-        shell: bash
+      - name: Install dependencies
         run: |
-          set -e
+          npm install --legacy-peer-deps
 
-          echo "=========================================="
-          echo "INSTALL DEPENDENCIES"
-          echo "=========================================="
+      - name: Test TypeScript
+        run: |
+          npm run typecheck
 
-          npm install
-
-          echo ""
-          echo "=========================================="
-          echo "TEST BUILD"
-          echo "=========================================="
-
+      - name: Test production build
+        run: |
           npm run build
 
-          echo ""
-          echo "BUILD BERHASIL."
+      - name: Remove temporary extraction
+        shell: bash
+        run: |
+          rm -rf extracted
+          rm -rf .qfx-preserve
 
       - name: Commit prepared project
         shell: bash
@@ -446,33 +317,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          echo "=========================================="
-          echo "MEMERIKSA STATUS GIT"
-          echo "=========================================="
-
-          git status --short
-
-          echo ""
-          echo "Menambahkan perubahan..."
-
           git add -A
 
           if git diff --cached --quiet; then
-            echo "Tidak ada perubahan."
-            exit 0
+            echo "No changes to commit."
+          else
+            git commit -m "Prepare QFX dashboard for Cloudflare"
+            git push
           fi
-
-          echo ""
-          echo "Commit project..."
-
-          git commit -m "Prepare QFX project"
-
-          echo ""
-          echo "Push ke main..."
-
-          git push origin main
-
-          echo ""
-          echo "=========================================="
-          echo "PROJECT QFX SIAP"
-          echo "=========================================="
