@@ -1,0 +1,152 @@
+name: QFX Clean Restore
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout QFX
+        uses: actions/checkout@v4
+        with:
+          ref: QFX
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify clean source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "QFX-CLEAN-SOURCE.zip" ]; then
+            echo "ERROR: QFX-CLEAN-SOURCE.zip tidak ditemukan."
+            exit 1
+          fi
+
+          ls -lh QFX-CLEAN-SOURCE.zip
+
+      - name: Extract clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/qfx-clean
+          mkdir -p /tmp/qfx-clean
+
+          unzip -q "QFX-CLEAN-SOURCE.zip" -d /tmp/qfx-clean
+
+          echo "Isi hasil ekstraksi:"
+          find /tmp/qfx-clean -maxdepth 4 -type f -name package.json -print
+
+      - name: Locate QFX project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f "/tmp/qfx-clean/AI-Trading-Dashboard/artifacts/ai-trading-dashboard/package.json" ]; then
+            SOURCE_ROOT="/tmp/qfx-clean/AI-Trading-Dashboard"
+          else
+            FOUND="$(find /tmp/qfx-clean -type f -path '*/artifacts/ai-trading-dashboard/package.json' -print -quit)"
+
+            if [ -z "$FOUND" ]; then
+              echo "ERROR: Project QFX tidak ditemukan di dalam ZIP."
+              exit 1
+            fi
+
+            SOURCE_ROOT="$(dirname "$(dirname "$(dirname "$FOUND")")")"
+          fi
+
+          echo "QFX source ditemukan di:"
+          echo "$SOURCE_ROOT"
+
+          if [ ! -f "$SOURCE_ROOT/artifacts/ai-trading-dashboard/package.json" ]; then
+            echo "ERROR: Struktur QFX tidak valid."
+            exit 1
+          fi
+
+          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+
+      - name: Replace repository source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Membersihkan source lama..."
+
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            ! -name ".github" \
+            -exec rm -rf {} +
+
+          echo "Menyalin source QFX bersih..."
+
+          cp -a "$SOURCE_ROOT"/. .
+
+          echo "Menghapus ZIP sementara..."
+
+          rm -f "QFX-CLEAN-SOURCE.zip"
+          rm -f "AI-Trading-Dashboard.zip"
+
+      - name: Verify QFX structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f "package.json"
+          test -f "pnpm-workspace.yaml"
+          test -f "pnpm-lock.yaml"
+          test -f "artifacts/ai-trading-dashboard/package.json"
+          test -f "artifacts/ai-trading-dashboard/src/pages/dashboard.tsx"
+
+          echo "Struktur QFX valid."
+
+      - name: Install pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install -g pnpm@10.15.0
+
+          pnpm --version
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck QFX dashboard
+        run: |
+          pnpm --filter @workspace/ai-trading-dashboard typecheck
+
+      - name: Build QFX dashboard
+        env:
+          PORT: 5173
+          BASE_PATH: /
+        run: |
+          pnpm --filter @workspace/ai-trading-dashboard build
+
+      - name: Commit restored QFX source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan untuk di-commit."
+            exit 0
+          fi
+
+          git commit -m "Restore clean QFX source"
+          git push origin HEAD:QFX
