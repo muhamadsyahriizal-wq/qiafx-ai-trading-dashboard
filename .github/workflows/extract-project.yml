@@ -1,353 +1,192 @@
-name: Prepare QFX Project
+name: Restore QFX Clean Source
 
 on:
-  push:
-    paths:
-      - "*.zip"
-      - ".github/workflows/extract-project.yml"
   workflow_dispatch:
+  push:
+    branches:
+      - QFX
+    paths:
+      - "QFX-CLEAN-SOURCE.zip"
 
 permissions:
   contents: write
 
 jobs:
-  prepare:
+  restore:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout QFX
         uses: actions/checkout@v4
+        with:
+          ref: QFX
+          fetch-depth: 0
 
-      - name: Extract QFX dashboard
+      - name: Verify clean source ZIP
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MENCARI AI TRADING DASHBOARD"
-          echo "=========================================="
+          if [ ! -f "QFX-CLEAN-SOURCE.zip" ]; then
+            echo "ERROR: QFX-CLEAN-SOURCE.zip tidak ditemukan."
+            exit 1
+          fi
 
-          rm -rf extracted
-          mkdir -p extracted
+          echo "ZIP ditemukan:"
+          ls -lh QFX-CLEAN-SOURCE.zip
 
-          FOUND_ZIP=""
+      - name: Extract clean source
+        shell: bash
+        run: |
+          set -e
 
-          for ZIP in ./*.zip; do
-            [ -f "$ZIP" ] || continue
+          rm -rf /tmp/qfx-clean
+          mkdir -p /tmp/qfx-clean
 
-            echo ""
-            echo "Memeriksa ZIP: $ZIP"
+          unzip -q "QFX-CLEAN-SOURCE.zip" -d /tmp/qfx-clean
 
-            rm -rf testzip
-            mkdir -p testzip
+          echo "Isi hasil ekstraksi:"
+          find /tmp/qfx-clean -maxdepth 2 -type f | head -100
 
-            unzip -q "$ZIP" -d testzip
+      - name: Locate QFX project
+        shell: bash
+        run: |
+          set -e
 
-            # Cari project yang mempunyai file Vite
-            CANDIDATE=$(find testzip \
-              -type f \
-              \( -name "vite.config.ts" -o -name "vite.config.js" \) \
-              -print -quit)
+          PROJECT_DIR=""
 
-            if [ -n "$CANDIDATE" ]; then
-              FOUND_ZIP="$ZIP"
-              echo "ZIP cocok ditemukan: $ZIP"
-              echo "Vite config: $CANDIDATE"
-              break
+          if [ -f "/tmp/qfx-clean/AI-Trading-Dashboard/package.json" ]; then
+            PROJECT_DIR="/tmp/qfx-clean/AI-Trading-Dashboard"
+          else
+            FOUND="$(find /tmp/qfx-clean -type f -path '*/artifacts/ai-trading-dashboard/package.json' -print -quit)"
+
+            if [ -n "$FOUND" ]; then
+              PROJECT_DIR="$(dirname "$(dirname "$(dirname "$FOUND")")")"
             fi
-          done
+          fi
 
-          if [ -z "$FOUND_ZIP" ]; then
-            echo "ERROR: Tidak menemukan ZIP project QFX."
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/artifacts/ai-trading-dashboard/package.json" ]; then
+            echo "ERROR: Project QFX yang benar tidak ditemukan."
+            echo "Struktur ZIP:"
+            find /tmp/qfx-clean -maxdepth 4 -type f -name "package.json" -print
             exit 1
           fi
 
-          rm -rf testzip
-          mkdir -p extracted
+          echo "QFX project ditemukan di:"
+          echo "$PROJECT_DIR"
 
-          echo ""
-          echo "Mengekstrak:"
-          echo "$FOUND_ZIP"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          unzip -q "$FOUND_ZIP" -d extracted
+      - name: Verify correct QFX dashboard
+        shell: bash
+        run: |
+          set -e
 
-          echo ""
-          echo "Mencari folder project..."
+          APP="$PROJECT_DIR/artifacts/ai-trading-dashboard"
 
-          APP_DIR=""
+          test -f "$APP/package.json"
+          test -f "$APP/vite.config.ts"
+          test -f "$APP/src/pages/dashboard.tsx"
+          test -f "$PROJECT_DIR/artifacts/api-server/package.json"
+          test -f "$PROJECT_DIR/lib/api-client-react/package.json"
+          test -f "$PROJECT_DIR/pnpm-workspace.yaml"
+          test -f "$PROJECT_DIR/pnpm-lock.yaml"
 
-          # Prioritas 1:
-          # project yang mempunyai dashboard.tsx
-          while IFS= read -r DASHBOARD_FILE; do
-            DIR="$(dirname "$DASHBOARD_FILE")"
-
-            while [ "$DIR" != "." ] && [ "$DIR" != "/" ]; do
-              if [ -f "$DIR/package.json" ] && \
-                 [ -f "$DIR/index.html" ] && \
-                 { [ -f "$DIR/vite.config.ts" ] || [ -f "$DIR/vite.config.js" ]; }; then
-
-                APP_DIR="$DIR"
-                break 2
-              fi
-
-              DIR="$(dirname "$DIR")"
-            done
-          done < <(find extracted -type f -path "*/src/pages/dashboard.tsx")
-
-          # Prioritas 2:
-          # project Vite biasa
-          if [ -z "$APP_DIR" ]; then
-            while IFS= read -r VITE_FILE; do
-              DIR="$(dirname "$VITE_FILE")"
-
-              if [ -f "$DIR/package.json" ] && \
-                 [ -f "$DIR/index.html" ]; then
-                APP_DIR="$DIR"
-                break
-              fi
-            done < <(
-              find extracted -type f \
-              \( -name "vite.config.ts" -o -name "vite.config.js" \)
-            )
-          fi
-
-          if [ -z "$APP_DIR" ]; then
-            echo ""
-            echo "ERROR: Folder project QFX tidak ditemukan."
-            echo ""
-            echo "Isi extracted:"
-            find extracted -maxdepth 6 -type f | head -200
+          if grep -q "Component Preview Server" "$APP/src/pages/dashboard.tsx"; then
+            echo "ERROR: Wrong mockup project detected."
             exit 1
           fi
 
-          echo ""
-          echo "=========================================="
-          echo "PROJECT DITEMUKAN"
-          echo "=========================================="
-          echo "$APP_DIR"
+          echo "Correct QFX project verified."
 
-          echo ""
-          echo "File penting:"
-          find "$APP_DIR" -maxdepth 3 -type f \
-            \( -name "package.json" \
-            -o -name "index.html" \
-            -o -name "vite.config.ts" \
-            -o -name "tsconfig.json" \
-            -o -name "dashboard.tsx" \
-            \) \
-            -print
+      - name: Replace repository source
+        shell: bash
+        run: |
+          set -e
 
-          echo ""
-          echo "=========================================="
-          echo "MENYALIN PROJECT QFX KE ROOT REPOSITORY"
-          echo "=========================================="
+          echo "Cleaning old project files..."
 
-          # Bersihkan file project lama,
-          # tetapi jangan menghapus .git atau workflow.
           find . -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
             ! -name ".github" \
-            ! -name "*.zip" \
-            ! -name "extracted" \
+            ! -name "QFX-CLEAN-SOURCE.zip" \
             -exec rm -rf {} +
 
-          cp -a "$APP_DIR"/. ./
+          echo "Copying clean QFX source..."
 
-          echo ""
-          echo "Project berhasil disalin."
+          cp -a "$PROJECT_DIR"/. .
 
-      - name: Prepare package.json
+          echo "Removing files that must not remain in the repository..."
+
+          rm -rf .config
+          rm -rf .agents
+          rm -rf .conversation
+          rm -rf node_modules
+          rm -rf dist
+          rm -rf extracted
+          rm -rf packages
+
+          rm -f AI-Trading-Dashboard.zip
+          rm -f QFX-CLEAN-SOURCE.zip
+          rm -f package-lock.json
+          rm -f yarn.lock
+
+          echo "Final repository structure:"
+          ls -la
+
+      - name: Verify restored repository
         shell: bash
         run: |
           set -e
 
-          echo "=========================================="
-          echo "MEMERIKSA PACKAGE.JSON"
-          echo "=========================================="
+          test -f "package.json"
+          test -f "pnpm-workspace.yaml"
+          test -f "pnpm-lock.yaml"
 
-          test -f package.json
+          test -d "artifacts/ai-trading-dashboard"
+          test -f "artifacts/ai-trading-dashboard/package.json"
+          test -f "artifacts/ai-trading-dashboard/src/pages/dashboard.tsx"
+          test -f "artifacts/ai-trading-dashboard/vite.config.ts"
 
-          node <<'NODE'
-          const fs = require("fs");
+          test -d "artifacts/api-server"
+          test -d "lib/api-client-react"
 
-          const file = "package.json";
-          const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-
-          const sections = [
-            "dependencies",
-            "devDependencies",
-            "optionalDependencies"
-          ];
-
-          for (const section of sections) {
-            if (!pkg[section]) continue;
-
-            for (const [name, value] of Object.entries(pkg[section])) {
-              if (value === "catalog:") {
-                console.log(`catalog ditemukan: ${name}`);
-
-                // Gunakan versi terbaru dari npm.
-                const { execSync } = require("child_process");
-
-                const version = execSync(
-                  `npm view "${name}" version`,
-                  {
-                    encoding: "utf8"
-                  }
-                ).trim();
-
-                if (!version) {
-                  throw new Error(
-                    `Tidak dapat menemukan versi npm untuk ${name}`
-                  );
-                }
-
-                pkg[section][name] = `^${version}`;
-
-                console.log(
-                  `${name}: catalog: -> ^${version}`
-                );
-              }
-            }
-          }
-
-          fs.writeFileSync(
-            file,
-            JSON.stringify(pkg, null, 2) + "\n"
-          );
-
-          console.log("package.json selesai diperiksa.");
-          NODE
-
-          echo ""
-          echo "Memastikan tidak ada catalog:"
-
-          if grep -R '"catalog:"' package.json; then
-            echo "ERROR: catalog masih ditemukan."
+          if grep -q "Component Preview Server" "src/App.tsx" 2>/dev/null; then
+            echo "ERROR: Wrong mockup App.tsx remains at repository root."
             exit 1
           fi
 
-          echo "Tidak ada catalog: lagi."
+          echo "QFX source restoration verified successfully."
 
-      - name: Fix TypeScript configuration
-        shell: bash
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck QFX dashboard
+        env:
+          PORT: 5173
+          BASE_PATH: /
         run: |
-          set -e
+          pnpm --filter @workspace/ai-trading-dashboard typecheck
 
-          echo "=========================================="
-          echo "MEMERIKSA TSCONFIG"
-          echo "=========================================="
-
-          if [ -f tsconfig.json ]; then
-            echo "tsconfig.json ditemukan."
-
-            if grep -q '"extends"' tsconfig.json; then
-              echo "Menggunakan tsconfig project yang ada."
-            else
-              echo "tsconfig tidak memakai extends."
-            fi
-          else
-            echo "tsconfig.json belum ada."
-            echo "Membuat konfigurasi TypeScript dasar."
-
-            cat > tsconfig.json <<'EOF'
-          {
-            "compilerOptions": {
-              "target": "ES2022",
-              "useDefineForClassFields": true,
-              "lib": [
-                "ES2022",
-                "DOM",
-                "DOM.Iterable"
-              ],
-              "allowJs": false,
-              "skipLibCheck": true,
-              "esModuleInterop": true,
-              "allowSyntheticDefaultImports": true,
-              "strict": true,
-              "forceConsistentCasingInFileNames": true,
-              "module": "ESNext",
-              "moduleResolution": "Bundler",
-              "resolveJsonModule": true,
-              "isolatedModules": true,
-              "noEmit": true,
-              "jsx": "react-jsx",
-              "incremental": true,
-              "types": [
-                "node",
-                "vite/client"
-              ],
-              "baseUrl": ".",
-              "paths": {
-                "@/*": [
-                  "./src/*"
-                ]
-              }
-            },
-            "include": [
-              "src/**/*",
-              "mockupPreviewPlugin.ts",
-              "vite.config.ts"
-            ],
-            "exclude": [
-              "node_modules",
-              "build",
-              "dist",
-              "**/*.test.ts"
-            ]
-          }
-          EOF
-          fi
-
-      - name: Verify QFX project
-        shell: bash
+      - name: Build QFX dashboard
+        env:
+          PORT: 5173
+          BASE_PATH: /
         run: |
-          set -e
+          pnpm --filter @workspace/ai-trading-dashboard build
 
-          echo "=========================================="
-          echo "VERIFIKASI PROJECT QFX"
-          echo "=========================================="
-
-          test -f package.json
-          test -f index.html
-          test -d src
-
-          echo ""
-          echo "package.json OK"
-          echo "index.html OK"
-          echo "src/ OK"
-
-          if [ -f vite.config.ts ]; then
-            echo "vite.config.ts OK"
-          elif [ -f vite.config.js ]; then
-            echo "vite.config.js OK"
-          else
-            echo "ERROR: vite.config tidak ditemukan."
-            exit 1
-          fi
-
-          echo ""
-          echo "Mencari dashboard.tsx:"
-
-          DASHBOARD=$(find src -type f -name "dashboard.tsx" -print -quit || true)
-
-          if [ -n "$DASHBOARD" ]; then
-            echo "DASHBOARD DITEMUKAN:"
-            echo "$DASHBOARD"
-          else
-            echo "dashboard.tsx belum ditemukan."
-          fi
-
-          echo ""
-          echo "Struktur src:"
-          find src -maxdepth 3 -type f | sort | head -200
-
-          echo ""
-          echo "=========================================="
-          echo "VERIFIKASI BERHASIL"
-          echo "=========================================="
-
-      - name: Commit prepared project
+      - name: Commit restored QFX source
         shell: bash
         run: |
           set -e
@@ -358,17 +197,10 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "Tidak ada perubahan."
+            echo "No source changes to commit."
             exit 0
           fi
 
-          git commit -m "Prepare QFX project"
+          git commit -m "Restore complete QFX trading dashboard"
 
-          git pull --rebase origin main
-
-          git push origin main
-
-          echo ""
-          echo "=========================================="
-          echo "PROJECT QFX SIAP"
-          echo "=========================================="
+          git push origin QFX
