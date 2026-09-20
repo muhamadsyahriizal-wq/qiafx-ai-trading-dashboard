@@ -266,7 +266,7 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "package.json"
+          echo "ROOT package.json"
           echo "=========================================="
 
           cat "$APP_DIR/package.json"
@@ -370,26 +370,70 @@ jobs:
 
           fi
 
-      - name: Prepare package.json
+      - name: Prepare ALL package.json files
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "MENYIAPKAN PACKAGE.JSON"
+          echo "MEMBERSIHKAN SEMUA PACKAGE.JSON"
           echo "=========================================="
-
-          test -f package.json
 
           node <<'NODE'
           const fs = require("fs");
+          const path = require("path");
           const { execSync } = require("child_process");
 
-          const file = "package.json";
+          function findPackageFiles(dir) {
+            const results = [];
 
-          const pkg = JSON.parse(
-            fs.readFileSync(file, "utf8")
-          );
+            function walk(current) {
+              const entries = fs.readdirSync(current, {
+                withFileTypes: true
+              });
+
+              for (const entry of entries) {
+                const full = path.join(current, entry.name);
+
+                if (entry.isDirectory()) {
+                  if (
+                    entry.name === "node_modules" ||
+                    entry.name === ".git" ||
+                    entry.name === "dist" ||
+                    entry.name === "build" ||
+                    entry.name === "extracted"
+                  ) {
+                    continue;
+                  }
+
+                  walk(full);
+                } else if (
+                  entry.isFile() &&
+                  entry.name === "package.json"
+                ) {
+                  results.push(full);
+                }
+              }
+            }
+
+            walk(dir);
+            return results;
+          }
+
+          const files = findPackageFiles(".");
+
+          console.log("");
+          console.log("PACKAGE.JSON DITEMUKAN:");
+
+          for (const file of files) {
+            console.log(` - ${file}`);
+          }
+
+          if (files.length === 0) {
+            throw new Error(
+              "Tidak ada package.json ditemukan."
+            );
+          }
 
           const sections = [
             "dependencies",
@@ -397,77 +441,117 @@ jobs:
             "optionalDependencies"
           ];
 
-          for (const section of sections) {
+          for (const file of files) {
 
-            if (!pkg[section]) {
-              continue;
-            }
+            console.log("");
+            console.log("Memproses:");
+            console.log(file);
 
-            for (const [name, value] of Object.entries(pkg[section])) {
+            const pkg = JSON.parse(
+              fs.readFileSync(file, "utf8")
+            );
 
-              if (value === "workspace:*") {
+            let changed = false;
 
-                if (name === "@workspace/api-client-react") {
+            for (const section of sections) {
 
-                  pkg[section][name] =
-                    "file:./packages/api-client-react";
+              if (!pkg[section]) {
+                continue;
+              }
+
+              for (
+                const [name, value]
+                of Object.entries(pkg[section])
+              ) {
+
+                if (value === "catalog:") {
 
                   console.log(
-                    `${name}: workspace:* -> file:./packages/api-client-react`
+                    `  ${name}: catalog:`
                   );
-                }
-              }
 
-              if (value === "catalog:") {
+                  console.log(
+                    `  Mencari versi npm...`
+                  );
 
-                console.log(
-                  `Mencari versi npm untuk ${name}...`
-                );
+                  const version = execSync(
+                    `npm view "${name}" version`,
+                    {
+                      encoding: "utf8"
+                    }
+                  ).trim();
 
-                const version = execSync(
-                  `npm view "${name}" version`,
-                  {
-                    encoding: "utf8"
+                  if (!version) {
+                    throw new Error(
+                      `Versi npm tidak ditemukan untuk ${name}`
+                    );
                   }
-                ).trim();
 
-                if (!version) {
-                  throw new Error(
-                    `Tidak dapat menemukan versi npm untuk ${name}`
+                  pkg[section][name] =
+                    `^${version}`;
+
+                  console.log(
+                    `  -> ^${version}`
                   );
+
+                  changed = true;
                 }
 
-                pkg[section][name] = `^${version}`;
+                if (value === "workspace:*") {
 
-                console.log(
-                  `${name}: catalog: -> ^${version}`
-                );
+                  if (
+                    name ===
+                    "@workspace/api-client-react"
+                  ) {
+
+                    if (
+                      file === "package.json"
+                    ) {
+
+                      pkg[section][name] =
+                        "file:./packages/api-client-react";
+
+                      console.log(
+                        `  ${name}: workspace:* -> file:./packages/api-client-react`
+                      );
+
+                      changed = true;
+
+                    } else {
+
+                      console.log(
+                        `  ${name}: workspace:* dipertahankan pada package internal`
+                      );
+                    }
+                  }
+                }
               }
+            }
+
+            if (changed) {
+
+              fs.writeFileSync(
+                file,
+                JSON.stringify(pkg, null, 2) + "\n"
+              );
+
+              console.log(
+                "  package.json diperbarui."
+              );
+
+            } else {
+
+              console.log(
+                "  Tidak ada perubahan."
+              );
             }
           }
 
-          fs.writeFileSync(
-            file,
-            JSON.stringify(pkg, null, 2) + "\n"
+          console.log("");
+          console.log(
+            "SEMUA PACKAGE.JSON SELESAI DIPROSES."
           );
-
-          console.log("package.json selesai.");
           NODE
-
-          echo ""
-          echo "MEMERIKSA catalog: DI PACKAGE.JSON"
-
-          if grep -R \
-            '"catalog:"' \
-            package.json; then
-
-            echo ""
-            echo "ERROR: catalog: masih ditemukan di package.json."
-
-            exit 1
-          fi
-
-          echo "Tidak ada catalog: di package.json."
 
       - name: Remove incompatible lockfiles
         shell: bash
@@ -475,19 +559,23 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "MEMBERSIHKAN LOCKFILE LAMA"
+          echo "MENGHAPUS LOCKFILE LAMA"
           echo "=========================================="
 
-          rm -f package-lock.json
-          rm -f npm-shrinkwrap.json
+          find . \
+            -type f \
+            \( \
+              -name "package-lock.json" \
+              -o -name "npm-shrinkwrap.json" \
+            \) \
+            ! -path "*/.git/*" \
+            ! -path "*/node_modules/*" \
+            ! -path "*/extracted/*" \
+            -print \
+            -delete
 
           echo ""
-          echo "package-lock.json lama DIHAPUS."
-
-          echo "npm-shrinkwrap.json lama DIHAPUS jika ada."
-
-          echo ""
-          echo "Lockfile baru akan dibuat oleh npm."
+          echo "SEMUA LOCKFILE LAMA DIHAPUS."
 
       - name: Verify no catalog protocol remains
         shell: bash
@@ -495,28 +583,94 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "MEMERIKSA catalog:"
+          echo "MEMERIKSA SEMUA PACKAGE.JSON"
           echo "=========================================="
 
-          if grep -R \
-            "catalog:" \
-            . \
-            --include="package.json" \
-            --exclude-dir=.git \
-            --exclude-dir=node_modules \
-            --exclude-dir=dist \
-            --exclude-dir=extracted \
-            2>/dev/null; then
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
 
-            echo ""
-            echo "ERROR: catalog: masih ditemukan."
-            echo "Periksa package.json."
+          function findPackageFiles(dir) {
+            const results = [];
 
-            exit 1
-          fi
+            function walk(current) {
+              for (
+                const entry of fs.readdirSync(
+                  current,
+                  { withFileTypes: true }
+                )
+              ) {
 
-          echo ""
-          echo "AMAN: tidak ada catalog: pada package.json."
+                const full =
+                  path.join(current, entry.name);
+
+                if (entry.isDirectory()) {
+
+                  if (
+                    [
+                      "node_modules",
+                      ".git",
+                      "dist",
+                      "build",
+                      "extracted"
+                    ].includes(entry.name)
+                  ) {
+                    continue;
+                  }
+
+                  walk(full);
+
+                } else if (
+                  entry.isFile() &&
+                  entry.name === "package.json"
+                ) {
+
+                  results.push(full);
+                }
+              }
+            }
+
+            walk(dir);
+            return results;
+          }
+
+          const files = findPackageFiles(".");
+
+          let errors = 0;
+
+          for (const file of files) {
+
+            const text =
+              fs.readFileSync(file, "utf8");
+
+            if (text.includes('"catalog:"')) {
+
+              console.log(
+                `ERROR catalog: masih ada di ${file}`
+              );
+
+              errors++;
+
+            } else {
+
+              console.log(
+                `OK: ${file}`
+              );
+            }
+          }
+
+          if (errors > 0) {
+
+            throw new Error(
+              `${errors} package.json masih memiliki catalog:`
+            );
+          }
+
+          console.log("");
+          console.log(
+            "SEMUA package.json BERSIH DARI catalog:."
+          );
+          NODE
 
       - name: Fix TypeScript configuration
         shell: bash
