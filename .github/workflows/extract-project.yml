@@ -57,18 +57,12 @@ jobs:
             echo "$FILE"
 
             if unzip -l "$FILE" 2>/dev/null | grep -q "vite.config.ts"; then
-
               if unzip -l "$FILE" 2>/dev/null | grep -q "index.html"; then
-
                 if unzip -l "$FILE" 2>/dev/null | grep -q "package.json"; then
-
                   ZIP_FILE="$FILE"
                   break
-
                 fi
-
               fi
-
             fi
 
           done < <(
@@ -84,9 +78,6 @@ jobs:
             echo ""
             echo "ERROR: Application ZIP was not found."
 
-            echo ""
-            echo "ZIP files found:"
-
             find . \
               -maxdepth 3 \
               -type f \
@@ -94,7 +85,6 @@ jobs:
               -print
 
             exit 1
-
           fi
 
           echo ""
@@ -132,10 +122,7 @@ jobs:
             echo "Continuing to inspect extracted files."
           fi
 
-          if [ ! -d extracted ]; then
-            echo "ERROR: extracted directory does not exist."
-            exit 1
-          fi
+          test -d extracted
 
           echo ""
           echo "Extraction finished."
@@ -147,8 +134,6 @@ jobs:
         shell: bash
         run: |
           set -u
-
-          echo "Removing nested Git repositories..."
 
           find extracted \
             -type d \
@@ -172,7 +157,7 @@ jobs:
           echo "Nested Git cleanup finished."
 
       # =========================================================
-      # 6. INSPECT EXTRACTED PROJECT
+      # 6. INSPECT PROJECT
       # =========================================================
       - name: Inspect extracted project
         shell: bash
@@ -180,9 +165,7 @@ jobs:
           set -u
 
           echo ""
-          echo "======================================"
           echo "EXTRACTED DIRECTORIES"
-          echo "======================================"
 
           find extracted \
             -maxdepth 5 \
@@ -191,9 +174,7 @@ jobs:
             | head -300
 
           echo ""
-          echo "======================================"
           echo "PROJECT FILES"
-          echo "======================================"
 
           find extracted \
             -maxdepth 7 \
@@ -211,9 +192,6 @@ jobs:
           set -u
 
           APP_DIR=""
-
-          echo ""
-          echo "Searching for Vite application..."
 
           while IFS= read -r -d '' VITE_FILE; do
 
@@ -237,25 +215,11 @@ jobs:
 
           if [ -z "$APP_DIR" ]; then
 
-            echo ""
             echo "ERROR: Vite application was not found."
-
-            echo ""
-            echo "vite.config.ts files:"
 
             find extracted \
               -type f \
               -name "vite.config.ts" \
-              -not -path "*/node_modules/*" \
-              -print
-
-            echo ""
-            echo "package.json files:"
-
-            find extracted \
-              -type f \
-              -name "package.json" \
-              -not -path "*/node_modules/*" \
               -print
 
             exit 1
@@ -263,9 +227,7 @@ jobs:
           fi
 
           echo ""
-          echo "======================================"
-          echo "APPLICATION FOUND"
-          echo "======================================"
+          echo "APPLICATION FOUND:"
           echo "$APP_DIR"
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
@@ -280,9 +242,6 @@ jobs:
 
           API_PACKAGE_DIR=""
 
-          echo ""
-          echo "Searching for @workspace/api-client-react..."
-
           while IFS= read -r -d '' PACKAGE_FILE; do
 
             NAME="$(
@@ -290,25 +249,21 @@ jobs:
                 const fs = require("fs");
 
                 try {
-                  const file = process.argv[1];
-
                   const pkg = JSON.parse(
-                    fs.readFileSync(file, "utf8")
+                    fs.readFileSync(process.argv[1], "utf8")
                   );
 
                   process.stdout.write(pkg.name || "");
 
-                } catch (error) {
+                } catch {
                   process.stdout.write("");
                 }
               ' "$PACKAGE_FILE"
             )"
 
             if [ "$NAME" = "@workspace/api-client-react" ]; then
-
               API_PACKAGE_DIR="$(dirname "$PACKAGE_FILE")"
               break
-
             fi
 
           done < <(
@@ -322,12 +277,7 @@ jobs:
           if [ -z "$API_PACKAGE_DIR" ]; then
 
             echo ""
-            echo "======================================"
-            echo "ERROR: API CLIENT NOT FOUND"
-            echo "======================================"
-
-            echo ""
-            echo "Available package.json files:"
+            echo "ERROR: @workspace/api-client-react was not found."
 
             find extracted \
               -type f \
@@ -336,13 +286,10 @@ jobs:
               -print
 
             exit 1
-
           fi
 
           echo ""
-          echo "======================================"
-          echo "API CLIENT FOUND"
-          echo "======================================"
+          echo "API CLIENT FOUND:"
           echo "$API_PACKAGE_DIR"
 
           echo "API_PACKAGE_DIR=$API_PACKAGE_DIR" >> "$GITHUB_ENV"
@@ -362,16 +309,7 @@ jobs:
             "$API_PACKAGE_DIR" \
             "packages/api-client-react"
 
-          echo ""
-          echo "API client copied successfully."
-
-          echo ""
-          echo "API client files:"
-
-          find packages/api-client-react \
-            -maxdepth 5 \
-            -type f \
-            | head -300
+          echo "API client prepared."
 
       # =========================================================
       # 10. COPY APPLICATION TO ROOT
@@ -381,20 +319,13 @@ jobs:
         run: |
           set -u
 
-          echo ""
-          echo "======================================"
-          echo "PREPARING REPOSITORY ROOT"
-          echo "======================================"
-
           mkdir -p .qfx-temp
 
-          # Save original ZIP
+          # Save ZIP
           if [ -f "AI-Trading-Dashboard.zip" ]; then
-
             cp \
               "AI-Trading-Dashboard.zip" \
               ".qfx-temp/AI-Trading-Dashboard.zip"
-
           fi
 
           # Save API client
@@ -404,54 +335,13 @@ jobs:
             "packages/api-client-react" \
             ".qfx-temp/api-client-react"
 
-          echo ""
-          echo "Application source:"
-          echo "$APP_DIR"
+          # Verify application
+          test -d "$APP_DIR"
+          test -f "$APP_DIR/package.json"
+          test -f "$APP_DIR/index.html"
+          test -f "$APP_DIR/vite.config.ts"
 
-          if [ ! -d "$APP_DIR" ]; then
-
-            echo ""
-            echo "ERROR: Application directory does not exist."
-
-            echo "$APP_DIR"
-
-            exit 1
-
-          fi
-
-          if [ ! -f "$APP_DIR/package.json" ]; then
-
-            echo ""
-            echo "ERROR: package.json not found."
-
-            exit 1
-
-          fi
-
-          if [ ! -f "$APP_DIR/index.html" ]; then
-
-            echo ""
-            echo "ERROR: index.html not found."
-
-            exit 1
-
-          fi
-
-          if [ ! -f "$APP_DIR/vite.config.ts" ]; then
-
-            echo ""
-            echo "ERROR: vite.config.ts not found."
-
-            exit 1
-
-          fi
-
-          echo ""
-          echo "Application source is valid."
-
-          echo ""
-          echo "Cleaning old root files..."
-
+          # Clean old root files
           find . -maxdepth 1 \
             ! -name "." \
             ! -name ".git" \
@@ -462,16 +352,10 @@ jobs:
             -exec rm -rf {} + \
             2>/dev/null || true
 
-          echo ""
-          echo "Copying application..."
+          # Copy application
+          cp -R "$APP_DIR"/. .
 
-          cp -R \
-            "$APP_DIR"/. \
-            .
-
-          echo ""
-          echo "Restoring API client..."
-
+          # Restore API client
           mkdir -p packages
 
           rm -rf packages/api-client-react
@@ -480,15 +364,13 @@ jobs:
             ".qfx-temp/api-client-react" \
             "packages/api-client-react"
 
+          # Restore ZIP
           if [ -f ".qfx-temp/AI-Trading-Dashboard.zip" ]; then
-
             cp \
               ".qfx-temp/AI-Trading-Dashboard.zip" \
               "AI-Trading-Dashboard.zip"
-
           fi
 
-          echo ""
           echo "Application copied successfully."
 
       # =========================================================
@@ -498,8 +380,6 @@ jobs:
         shell: bash
         run: |
           set -u
-
-          echo "Removing nested Git metadata..."
 
           find . \
             -mindepth 2 \
@@ -519,15 +399,12 @@ jobs:
           echo "Git cleanup complete."
 
       # =========================================================
-      # 12. FIX WORKSPACE DEPENDENCY
+      # 12. FIX API CLIENT DEPENDENCY
       # =========================================================
       - name: Fix workspace dependency
         shell: bash
         run: |
           set -u
-
-          echo ""
-          echo "Fixing workspace dependencies..."
 
           node <<'NODE'
           const fs = require("fs");
@@ -546,20 +423,13 @@ jobs:
 
           for (const section of sections) {
 
-            if (!pkg[section]) {
-              continue;
-            }
+            if (!pkg[section]) continue;
 
-            if (
-              pkg[section]["@workspace/api-client-react"]
-            ) {
+            if (pkg[section]["@workspace/api-client-react"]) {
 
               pkg[section]["@workspace/api-client-react"] =
                 "file:./packages/api-client-react";
 
-              console.log(
-                "Converted @workspace/api-client-react"
-              );
             }
           }
 
@@ -569,45 +439,25 @@ jobs:
           );
           NODE
 
-          echo ""
-          echo "API client dependency:"
-
-          grep -n \
-            "api-client-react" \
-            package.json || true
+          echo "API client dependency fixed."
 
       # =========================================================
-      # 13. RESOLVE ALL CATALOG DEPENDENCIES
-      #
-      # THIS FIXES:
-      # Unsupported URL Type "catalog:"
+      # 13. REMOVE CATALOG DEPENDENCIES
       # =========================================================
-      - name: Resolve all catalog dependencies
+      - name: Resolve catalog dependencies
         shell: bash
         run: |
           set -u
-
-          echo ""
-          echo "======================================"
-          echo "RESOLVING CATALOG DEPENDENCIES"
-          echo "======================================"
 
           node <<'NODE'
           const fs = require("fs");
           const path = require("path");
 
-          const roots = [
-            ".",
-            "packages"
-          ];
+          const packageFiles = [];
 
-          const files = [];
+          function scan(dir) {
 
-          function walk(dir) {
-
-            if (!fs.existsSync(dir)) {
-              return;
-            }
+            if (!fs.existsSync(dir)) return;
 
             for (const entry of fs.readdirSync(dir, {
               withFileTypes: true
@@ -622,38 +472,28 @@ jobs:
                 continue;
               }
 
-              const full = path.join(
-                dir,
-                entry.name
-              );
+              const fullPath =
+                path.join(dir, entry.name);
 
               if (entry.isDirectory()) {
-                walk(full);
+                scan(fullPath);
               }
 
               if (
                 entry.isFile() &&
                 entry.name === "package.json"
               ) {
-                files.push(full);
+                packageFiles.push(fullPath);
               }
             }
           }
 
-          for (const root of roots) {
-            walk(root);
-          }
+          scan(".");
+          scan("packages");
 
-          const uniqueFiles = [
-            ...new Set(files)
+          const files = [
+            ...new Set(packageFiles)
           ];
-
-          console.log("");
-          console.log("Package files found:");
-
-          for (const file of uniqueFiles) {
-            console.log(file);
-          }
 
           const sections = [
             "dependencies",
@@ -662,9 +502,7 @@ jobs:
             "peerDependencies"
           ];
 
-          let changed = false;
-
-          for (const file of uniqueFiles) {
+          for (const file of files) {
 
             let pkg;
 
@@ -674,22 +512,15 @@ jobs:
                 fs.readFileSync(file, "utf8")
               );
 
-            } catch (error) {
-
-              console.log(
-                `Skipping invalid package.json: ${file}`
-              );
-
+            } catch {
               continue;
             }
 
-            let fileChanged = false;
+            let changed = false;
 
             for (const section of sections) {
 
-              if (!pkg[section]) {
-                continue;
-              }
+              if (!pkg[section]) continue;
 
               for (
                 const [name, value]
@@ -697,38 +528,22 @@ jobs:
               ) {
 
                 if (
-                  typeof value !== "string" ||
-                  !value.startsWith("catalog:")
+                  typeof value === "string" &&
+                  value.startsWith("catalog:")
                 ) {
-                  continue;
+
+                  console.log(
+                    `Replacing ${name}=${value} in ${file}`
+                  );
+
+                  pkg[section][name] = "latest";
+
+                  changed = true;
                 }
-
-                console.log("");
-                console.log(
-                  `CATALOG FOUND: ${name}=${value}`
-                );
-
-                /*
-                 * The original project uses pnpm catalog
-                 * dependencies. npm cannot understand
-                 * "catalog:" URLs.
-                 *
-                 * Resolve the package to the current npm
-                 * version so npm can install it.
-                 */
-
-                pkg[section][name] = "latest";
-
-                console.log(
-                  `Replacing ${name} ${value} -> latest`
-                );
-
-                fileChanged = true;
-                changed = true;
               }
             }
 
-            if (fileChanged) {
+            if (changed) {
 
               fs.writeFileSync(
                 file,
@@ -737,22 +552,10 @@ jobs:
 
             }
           }
-
-          console.log("");
-
-          if (changed) {
-            console.log(
-              "Catalog dependencies were converted."
-            );
-          } else {
-            console.log(
-              "No catalog dependencies found."
-            );
-          }
           NODE
 
           echo ""
-          echo "Checking for remaining catalog references..."
+          echo "Checking for catalog dependencies..."
 
           if grep -R \
             "catalog:" \
@@ -760,49 +563,115 @@ jobs:
             packages/*/package.json \
             2>/dev/null; then
 
-            echo ""
-            echo "ERROR: catalog dependency still exists."
-
+            echo "ERROR: catalog dependency remains."
             exit 1
-
-          else
-
-            echo ""
-            echo "SUCCESS: no catalog dependencies remain."
 
           fi
 
+          echo "No catalog dependencies remain."
+
       # =========================================================
-      # 14. CHECK WORKSPACE DEPENDENCIES
+      # 14. CREATE STANDALONE TYPESCRIPT CONFIG
+      #
+      # THIS FIXES THE REPLIT tsconfig.base.json ERROR
       # =========================================================
-      - name: Check workspace dependencies
+      - name: Create standalone TypeScript configuration
         shell: bash
         run: |
           set -u
 
           echo ""
-          echo "======================================"
-          echo "CHECKING WORKSPACE DEPENDENCIES"
-          echo "======================================"
+          echo "Creating standalone tsconfig.json..."
 
-          if grep -R \
-            "workspace:" \
-            package.json \
-            packages/*/package.json \
-            2>/dev/null; then
+          cat > tsconfig.json <<'EOF'
+          {
+            "compilerOptions": {
+              "target": "ES2022",
+              "useDefineForClassFields": true,
+              "lib": [
+                "ES2022",
+                "DOM",
+                "DOM.Iterable"
+              ],
+              "allowJs": false,
+              "skipLibCheck": true,
+              "esModuleInterop": true,
+              "allowSyntheticDefaultImports": true,
+              "strict": true,
+              "forceConsistentCasingInFileNames": true,
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "resolveJsonModule": true,
+              "isolatedModules": true,
+              "noEmit": true,
+              "jsx": "react-jsx",
+              "types": [
+                "node",
+                "vite/client"
+              ],
+              "baseUrl": ".",
+              "paths": {
+                "@/*": [
+                  "./src/*"
+                ],
+                "@workspace/api-client-react": [
+                  "./packages/api-client-react"
+                ]
+              }
+            },
+            "include": [
+              "src/**/*",
+              "vite.config.ts",
+              "mockupPreviewPlugin.ts"
+            ],
+            "exclude": [
+              "node_modules",
+              "dist",
+              "build",
+              "**/*.test.ts",
+              "**/*.test.tsx"
+            ]
+          }
+          EOF
 
-            echo ""
-            echo "WARNING: workspace references remain."
-
-          else
-
-            echo ""
-            echo "SUCCESS: no workspace references remain."
-
-          fi
+          echo ""
+          echo "New standalone tsconfig.json:"
+          cat tsconfig.json
 
       # =========================================================
-      # 15. VERIFY PROJECT
+      # 15. FIX PACKAGE TYPECHECK SCRIPT
+      # =========================================================
+      - name: Fix typecheck script
+        shell: bash
+        run: |
+          set -u
+
+          node <<'NODE'
+          const fs = require("fs");
+
+          const file = "package.json";
+
+          const pkg = JSON.parse(
+            fs.readFileSync(file, "utf8")
+          );
+
+          if (!pkg.scripts) {
+            pkg.scripts = {};
+          }
+
+          pkg.scripts.typecheck =
+            "tsc -p tsconfig.json --noEmit";
+
+          fs.writeFileSync(
+            file,
+            JSON.stringify(pkg, null, 2) + "\n"
+          );
+          NODE
+
+          echo "Typecheck script fixed."
+
+      # =========================================================
+      # 16. VERIFY PROJECT
       # =========================================================
       - name: Verify project structure
         shell: bash
@@ -811,36 +680,7 @@ jobs:
 
           echo ""
           echo "======================================"
-          echo "ROOT FILES"
-          echo "======================================"
-
-          ls -la
-
-          echo ""
-          echo "======================================"
-          echo "SOURCE FILES"
-          echo "======================================"
-
-          find src \
-            -maxdepth 4 \
-            -type f \
-            | sort \
-            | head -400
-
-          echo ""
-          echo "======================================"
-          echo "API CLIENT FILES"
-          echo "======================================"
-
-          find packages/api-client-react \
-            -maxdepth 5 \
-            -type f \
-            | sort \
-            | head -300
-
-          echo ""
-          echo "======================================"
-          echo "REQUIRED FILE CHECK"
+          echo "PROJECT CHECK"
           echo "======================================"
 
           test -f package.json
@@ -855,7 +695,7 @@ jobs:
           echo "All required files exist."
 
       # =========================================================
-      # 16. INSTALL DEPENDENCIES
+      # 17. INSTALL DEPENDENCIES
       # =========================================================
       - name: Install dependencies
         shell: bash
@@ -870,7 +710,7 @@ jobs:
           npm install --legacy-peer-deps
 
       # =========================================================
-      # 17. TYPESCRIPT CHECK
+      # 18. TYPESCRIPT CHECK
       # =========================================================
       - name: TypeScript typecheck
         shell: bash
@@ -882,10 +722,13 @@ jobs:
           echo "TYPESCRIPT CHECK"
           echo "======================================"
 
-          npm run typecheck
+          npx tsc \
+            -p tsconfig.json \
+            --noEmit \
+            --skipLibCheck
 
       # =========================================================
-      # 18. PRODUCTION BUILD
+      # 19. PRODUCTION BUILD
       # =========================================================
       - name: Production build
         shell: bash
@@ -900,7 +743,7 @@ jobs:
           npm run build
 
       # =========================================================
-      # 19. CLEAN TEMPORARY FILES
+      # 20. CLEAN TEMPORARY FILES
       # =========================================================
       - name: Clean temporary files
         shell: bash
@@ -913,7 +756,7 @@ jobs:
           echo "Temporary files removed."
 
       # =========================================================
-      # 20. FINAL VERIFICATION
+      # 21. FINAL VERIFICATION
       # =========================================================
       - name: Final project verification
         shell: bash
@@ -925,8 +768,6 @@ jobs:
           echo "FINAL QFX PROJECT"
           echo "======================================"
 
-          echo ""
-          echo "Root:"
           ls -la
 
           echo ""
@@ -934,14 +775,14 @@ jobs:
           ls -la packages/api-client-react
 
           echo ""
-          echo "Build:"
+          echo "Build output:"
           ls -la dist 2>/dev/null || true
 
           echo ""
           echo "QFX project verification complete."
 
       # =========================================================
-      # 21. COMMIT
+      # 22. COMMIT
       # =========================================================
       - name: Commit prepared project
         shell: bash
