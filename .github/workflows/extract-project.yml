@@ -1,0 +1,40 @@
+name: Extract QFX Project
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        run: |
+          rm -rf extracted
+          mkdir extracted
+          unzip -q "AI-Trading-Dashboard.zip" -d extracted
+
+          ROOT=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+
+          if [ -n "$ROOT" ]; then
+            cp -a "$ROOT"/. ./
+          else
+            cp -a extracted/. ./
+          fi
+
+          rm -rf extracted
+          rm -f "AI-Trading-Dashboard.zip"
+
+      - name: Commit extracted project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Extract QFX project"
+          git push
