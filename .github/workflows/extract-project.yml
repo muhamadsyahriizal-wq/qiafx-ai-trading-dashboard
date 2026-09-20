@@ -1,4 +1,73 @@
-      - name: Commit extracted project
+name: Extract QFX Project
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p extracted
+
+          FOUND=""
+
+          for ZIP in *.zip; do
+            [ -f "$ZIP" ] || continue
+
+            echo "Memeriksa: $ZIP"
+
+            rm -rf testzip
+            mkdir -p testzip
+
+            if unzip -q "$ZIP" -d testzip; then
+              if find testzip -type f -name "package.json" | grep -q .; then
+                FOUND="$ZIP"
+                echo "PROJECT ZIP DITEMUKAN: $ZIP"
+                break
+              fi
+            fi
+          done
+
+          if [ -z "$FOUND" ]; then
+            echo "Tidak ada ZIP yang berisi package.json."
+            echo "Workflow selesai tanpa perubahan."
+            exit 0
+          fi
+
+          rm -rf extracted
+          mkdir -p extracted
+
+          unzip -q "$FOUND" -d extracted
+
+          PROJECT_DIR=$(find extracted -type f -name "package.json" -printf '%h\n' | head -n 1)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "package.json tidak ditemukan."
+            exit 1
+          fi
+
+          echo "Folder project: $PROJECT_DIR"
+
+          cp -a "$PROJECT_DIR"/. ./
+
+          rm -rf extracted testzip
+
+          echo "Project berhasil dibongkar."
+
+      - name: Commit project
         shell: bash
         run: |
           set -e
@@ -6,14 +75,15 @@
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git fetch origin main
-          git reset --soft origin/main
-
           git add -A
 
           if git diff --cached --quiet; then
             echo "Tidak ada perubahan."
-          else
-            git commit -m "Extract QFX project"
-            git push origin main
+            exit 0
           fi
+
+          git commit -m "Extract QFX project"
+
+          git pull --rebase origin main
+
+          git push origin main
