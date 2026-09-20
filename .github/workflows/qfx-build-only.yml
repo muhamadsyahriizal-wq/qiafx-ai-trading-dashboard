@@ -1,0 +1,145 @@
+name: QFX Build Only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-qfx:
+    name: Build QFX dashboard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout QFX
+        uses: actions/checkout@v4
+        with:
+          ref: QFX
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          pnpm --version
+
+      - name: Find QFX source ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          set -e
+
+          FIXED_ZIP=""
+          NORMAL_ZIP=""
+
+          if [ -f "QFX-CLEAN-SOURCE-FIXED.zip" ]; then
+            FIXED_ZIP="QFX-CLEAN-SOURCE-FIXED.zip"
+          fi
+
+          if [ -f "QFX-CLEAN-SOURCE.zip" ]; then
+            NORMAL_ZIP="QFX-CLEAN-SOURCE.zip"
+          fi
+
+          if [ -n "$FIXED_ZIP" ]; then
+            echo "zip=$FIXED_ZIP" >> "$GITHUB_OUTPUT"
+            echo "Using fixed source: $FIXED_ZIP"
+            exit 0
+          fi
+
+          if [ -n "$NORMAL_ZIP" ]; then
+            echo "zip=$NORMAL_ZIP" >> "$GITHUB_OUTPUT"
+            echo "Using source: $NORMAL_ZIP"
+            exit 0
+          fi
+
+          echo "ERROR: No QFX-CLEAN-SOURCE ZIP was found in the QFX branch."
+          echo ""
+          echo "ZIP files currently present:"
+          find . -maxdepth 1 -type f -iname "*.zip" -print || true
+          exit 1
+
+      - name: Extract source to temporary directory
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf /tmp/qfx-source
+          mkdir -p /tmp/qfx-source
+
+          unzip -q "${{ steps.find_zip.outputs.zip }}" -d /tmp/qfx-source
+
+          echo "Extracted files:"
+          find /tmp/qfx-source -maxdepth 2 -type f | head -100
+
+      - name: Locate project root
+        id: project
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_ROOT="/tmp/qfx-source/AI-Trading-Dashboard"
+
+          if [ ! -f "$PROJECT_ROOT/package.json" ]; then
+            echo "ERROR: AI-Trading-Dashboard/package.json was not found."
+            find /tmp/qfx-source -maxdepth 3 -name package.json -print
+            exit 1
+          fi
+
+          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          echo "Project root: $PROJECT_ROOT"
+
+      - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.root }}
+        run: |
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck QFX dashboard
+        working-directory: ${{ steps.project.outputs.root }}
+        run: |
+          pnpm --filter @workspace/ai-trading-dashboard typecheck
+
+      - name: Build QFX dashboard
+        working-directory: ${{ steps.project.outputs.root }}
+        env:
+          NODE_ENV: production
+          PORT: 5173
+          BASE_PATH: /
+        run: |
+          pnpm --filter @workspace/ai-trading-dashboard build
+
+      - name: Verify build output
+        working-directory: ${{ steps.project.outputs.root }}
+        shell: bash
+        run: |
+          set -e
+
+          DIST="artifacts/ai-trading-dashboard/dist/public"
+
+          if [ ! -d "$DIST" ]; then
+            echo "ERROR: Build directory was not created."
+            exit 1
+          fi
+
+          if [ ! -f "$DIST/index.html" ]; then
+            echo "ERROR: index.html was not created."
+            find "$DIST" -maxdepth 2 -type f -print
+            exit 1
+          fi
+
+          echo "QFX build succeeded."
+          echo "Build output:"
+          find "$DIST" -maxdepth 2 -type f -print | head -100
+
+      - name: Upload QFX build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qfx-dashboard-build
+          path: /tmp/qfx-source/AI-Trading-Dashboard/artifacts/ai-trading-dashboard/dist/public
+          if-no-files-found: error
+          retention-days: 7
